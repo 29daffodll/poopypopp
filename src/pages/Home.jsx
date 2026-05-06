@@ -42,7 +42,7 @@ const hotelListings = [
   }
 ]
 
-export default function Home({ onNavigate }) {
+export default function Home({ onNavigate, onLogin }) {
   const [search, setSearch] = useState({
     checkIn: '2026-05-01',
     checkOut: '2026-05-03'
@@ -77,7 +77,11 @@ export default function Home({ onNavigate }) {
     if (loginType === 'admin') {
       // Simple admin authentication (in real app, this would be API call)
       if (credentials.email === 'admin@hotel.com' && credentials.password === 'admin123') {
-        onNavigate('dashboard')
+        onLogin('admin', {
+          name: 'Admin User',
+          email: credentials.email,
+          rank: 'Administrator'
+        })
         setShowLoginModal(false)
       } else {
         alert('Invalid admin credentials. Use: admin@hotel.com / admin123')
@@ -86,7 +90,11 @@ export default function Home({ onNavigate }) {
     } else {
       // Guest login - just need email
       if (credentials.email) {
-        onNavigate('guestportal')
+        onLogin('guest', {
+          name: credentials.email,
+          email: credentials.email,
+          rank: 'Guest'
+        })
         setShowLoginModal(false)
       } else {
         alert('Please enter your email address')
@@ -114,8 +122,12 @@ export default function Home({ onNavigate }) {
             <label>Check-out</label>
             <input type="date" name="checkOut" value={search.checkOut} onChange={handleChange} />
           </div>
-          <button type="button" className="search-btn" onClick={() => {}}>
-            SEARCH
+          <button
+            type="button"
+            className="search-btn"
+            onClick={() => onNavigate('roombooking', { checkIn: search.checkIn, checkOut: search.checkOut })}
+          >
+            BOOK
           </button>
         </div>
       </section>

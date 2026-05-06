@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 import AdminLayout from './layouts/AdminLayout'
 import Home from './pages/Home'
@@ -12,18 +12,21 @@ import Guests from './pages/Guests'
 import GuestPortal from './pages/GuestPortal'
 import Feedback from './pages/Feedback'
 import DigitalKeys from './pages/DigitalKeys'
+import Reviews from './pages/Reviews'
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('home')
-  const [userType, setUserType] = useState(null) // 'admin' or 'guest'
-  const [user, setUser] = useState(null)
+  const [currentPage, setCurrentPage] = useState(() => {
+    const savedPage = window.localStorage.getItem('hotelrCurrentPage')
+    return savedPage || 'home'
+  })
+  const [userType, setUserType] = useState(() => window.localStorage.getItem('hotelrUserType')) // 'admin' or 'guest'
+  const [user, setUser] = useState(() => {
+    const savedUser = window.localStorage.getItem('hotelrUser')
+    return savedUser ? JSON.parse(savedUser) : null
+  })
   const [initialRoomType, setInitialRoomType] = useState(null)
-
-  const handleLogin = (type, userData) => {
-    setUserType(type)
-    setUser(userData)
-    setCurrentPage(type === 'admin' ? 'dashboard' : 'guestportal')
-  }
+  const [initialCheckInDate, setInitialCheckInDate] = useState('')
+  const [initialCheckOutDate, setInitialCheckOutDate] = useState('')
 
   const handleLogout = () => {
     setUserType(null)
@@ -31,9 +34,29 @@ function App() {
     setCurrentPage('home')
   }
 
+  const handleLogin = (type, userData) => {
+    setUserType(type)
+    setUser(userData)
+    setCurrentPage(type === 'admin' ? 'dashboard' : 'guestportal')
+  }
+
+  useEffect(() => {
+    if (userType && user) {
+      window.localStorage.setItem('hotelrUserType', userType)
+      window.localStorage.setItem('hotelrUser', JSON.stringify(user))
+      window.localStorage.setItem('hotelrCurrentPage', currentPage)
+    } else {
+      window.localStorage.removeItem('hotelrUserType')
+      window.localStorage.removeItem('hotelrUser')
+      window.localStorage.removeItem('hotelrCurrentPage')
+    }
+  }, [userType, user, currentPage])
+
   const handleNavigate = (page, params = {}) => {
     if (page === 'roombooking') {
       setInitialRoomType(params.roomType || null)
+      setInitialCheckInDate(params.checkIn || '')
+      setInitialCheckOutDate(params.checkOut || '')
     }
     setCurrentPage(page)
   }
@@ -51,13 +74,20 @@ function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'home':
-        return <Home onNavigate={handleNavigate} />
+        return <Home onNavigate={handleNavigate} onLogin={handleLogin} />
       case 'dashboard':
         return <AdminDashboard onNavigate={handleNavigate} />
       case 'checkin':
         return <CheckIn onBack={handleBack} />
       case 'roombooking':
-        return <RoomBooking onBack={handleBack} initialRoomType={initialRoomType} />
+        return (
+          <RoomBooking
+            onBack={handleBack}
+            initialRoomType={initialRoomType}
+            initialCheckInDate={initialCheckInDate}
+            initialCheckOutDate={initialCheckOutDate}
+          />
+        )
       case 'rooms':
         return <Rooms onBack={handleBack} />
       case 'checkout':
@@ -70,6 +100,8 @@ function App() {
         return <GuestPortal onNavigate={handleNavigate} onBack={() => setCurrentPage('home')} />
       case 'feedback':
         return <Feedback onBack={handleBack} />
+      case 'reviews':
+        return <Reviews onBack={handleBack} />
       case 'digitalkeys':
         return <DigitalKeys onBack={handleBack} />
       default:

@@ -6,6 +6,7 @@ export default function AdminDashboard({ onNavigate }) {
     { id: 'checkout', title: 'Check Out', icon: '/ICONS/check-out.png', color: '#87CEEB' },
     { id: 'cancelbooking', title: 'Cancel Booking', icon: '/ICONS/cancel.png', color: '#87CEEB' },
     { id: 'guests', title: 'Guests', icon: '/ICONS/user.png', color: '#87CEEB' },
+    { id: 'reviews', title: 'Reviews', icon: '/ICONS/user.png', color: '#87CEEB' },
   ]
 
   return (
