@@ -1,5 +1,24 @@
 import { useState } from 'react'
 
+function RatingStars({ value, onChange, name }) {
+  return (
+    <div className="rating-stars">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          className={`star ${star <= value ? 'active' : ''}`}
+          onClick={() => onChange(name, star)}
+          title={`${star} star${star > 1 ? 's' : ''}`}
+        >
+          ⭐
+        </button>
+      ))}
+      <span className="rating-text">{value}/5</span>
+    </div>
+  )
+}
+
 export default function Feedback({ onBack }) {
   const [formData, setFormData] = useState({
     bookingId: '',
@@ -51,25 +70,6 @@ export default function Feedback({ onBack }) {
       })
       setSubmitted(false)
     }, 3000)
-  }
-
-  const RatingStars = ({ value, onChange, name }) => {
-    return (
-      <div className="rating-stars">
-        {[1, 2, 3, 4, 5].map(star => (
-          <button
-            key={star}
-            type="button"
-            className={`star ${star <= value ? 'active' : ''}`}
-            onClick={() => onChange(name, star)}
-            title={`${star} star${star > 1 ? 's' : ''}`}
-          >
-            ⭐
-          </button>
-        ))}
-        <span className="rating-text">{value}/5</span>
-      </div>
-    )
   }
 
   if (submitted) {

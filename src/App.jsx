@@ -13,6 +13,8 @@ import GuestPortal from './pages/GuestPortal'
 import Feedback from './pages/Feedback'
 import DigitalKeys from './pages/DigitalKeys'
 import Reviews from './pages/Reviews'
+import Housekeeping from './pages/Housekeeping'
+import FoodDrinks from './pages/FoodDrinks'
 
 function App() {
   const [currentPage, setCurrentPage] = useState(() => {
@@ -90,6 +92,10 @@ function App() {
         )
       case 'rooms':
         return <Rooms onBack={handleBack} />
+      case 'housekeeping':
+        return <Housekeeping onBack={handleBack} />
+      case 'fooddrinks':
+        return <FoodDrinks onBack={handleBack} />
       case 'checkout':
         return <CheckOut onBack={handleBack} />
       case 'cancelbooking':
@@ -97,7 +103,14 @@ function App() {
       case 'guests':
         return <Guests onBack={handleBack} />
       case 'guestportal':
-        return <GuestPortal onNavigate={handleNavigate} onBack={() => setCurrentPage('home')} />
+        return (
+          <GuestPortal
+            user={user}
+            onNavigate={handleNavigate}
+            onBack={() => setCurrentPage('home')}
+            onLogout={handleLogout}
+          />
+        )
       case 'feedback':
         return <Feedback onBack={handleBack} />
       case 'reviews':
