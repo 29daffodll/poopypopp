@@ -15,6 +15,7 @@ import DigitalKeys from './pages/DigitalKeys'
 import Reviews from './pages/Reviews'
 import Housekeeping from './pages/Housekeeping'
 import FoodDrinks from './pages/FoodDrinks'
+import Settings from './pages/Settings'
 
 function App() {
   const [currentPage, setCurrentPage] = useState(() => {
@@ -29,6 +30,7 @@ function App() {
   const [initialRoomType, setInitialRoomType] = useState(null)
   const [initialCheckInDate, setInitialCheckInDate] = useState('')
   const [initialCheckOutDate, setInitialCheckOutDate] = useState('')
+  const [initialOpenBookingModal, setInitialOpenBookingModal] = useState(false)
 
   const handleLogout = () => {
     setUserType(null)
@@ -59,6 +61,9 @@ function App() {
       setInitialRoomType(params.roomType || null)
       setInitialCheckInDate(params.checkIn || '')
       setInitialCheckOutDate(params.checkOut || '')
+      setInitialOpenBookingModal(params.autoOpenBookingModal === true)
+    } else {
+      setInitialOpenBookingModal(false)
     }
     setCurrentPage(page)
   }
@@ -84,10 +89,12 @@ function App() {
       case 'roombooking':
         return (
           <RoomBooking
+            userType={userType}
             onBack={handleBack}
             initialRoomType={initialRoomType}
             initialCheckInDate={initialCheckInDate}
             initialCheckOutDate={initialCheckOutDate}
+            initialOpenBookingModal={initialOpenBookingModal}
           />
         )
       case 'rooms':
@@ -115,6 +122,8 @@ function App() {
         return <Feedback onBack={handleBack} />
       case 'reviews':
         return <Reviews onBack={handleBack} />
+      case 'settings':
+        return <Settings onBack={handleBack} />
       case 'digitalkeys':
         return <DigitalKeys onBack={handleBack} />
       default:
@@ -124,7 +133,7 @@ function App() {
 
   if (userType === 'admin') {
     return (
-      <AdminLayout user={user} onLogout={handleLogout}>
+      <AdminLayout user={user} onLogout={handleLogout} onNavigate={handleNavigate}>
         {renderPage()}
       </AdminLayout>
     )

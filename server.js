@@ -6,7 +6,7 @@ import Stripe from 'stripe'
 dotenv.config()
 
 const app = express()
-const port = Number(process.env.PORT || 5174)
+const port = Number(process.env.PORT || 5175)
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY
 
 if (!stripeSecretKey) {
@@ -16,7 +16,9 @@ if (!stripeSecretKey) {
 const stripe = new Stripe(stripeSecretKey || '')
 
 const allowedOrigins = [
-  process.env.FRONTEND_URL || process.env.VITE_APP_URL || 'http://localhost:5173'
+  process.env.FRONTEND_URL || process.env.VITE_APP_URL || 'http://localhost:5174',
+  'http://localhost:5173',
+  'http://127.0.0.1:5174'
 ]
 
 app.use(cors({ origin: allowedOrigins, methods: ['GET', 'POST'], credentials: true }))
@@ -39,9 +41,9 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     const successUrl =
-      process.env.STRIPE_SUCCESS_URL || 'http://localhost:5173/?payment=success'
+      process.env.STRIPE_SUCCESS_URL || 'http://localhost:5174/?payment=success'
     const cancelUrl =
-      process.env.STRIPE_CANCEL_URL || 'http://localhost:5173/?payment=cancel'
+      process.env.STRIPE_CANCEL_URL || 'http://localhost:5174/?payment=cancel'
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import RoomTypeCard from '../components/RoomTypeCard'
 import { getSupabase, isSupabaseConfigured } from '../lib/supabaseClient'
 import { compareSync, hashSync } from 'bcryptjs'
 
@@ -333,56 +334,18 @@ export default function Home({ onNavigate, onLogin }) {
           </div>
         </section>
 
-        <section className="hotel-results-section">
+        <section className="room-types-section" aria-label="Room categories">
           <div className="results-header">
             <div>
               <span className="results-eyebrow">Room types</span>
               <h2>B Morvie Hotel</h2>
-              <p className="results-sub">Tap a card to open booking with that category selected.</p>
+              <p className="results-sub">Choose a room type to start booking.</p>
             </div>
           </div>
 
-          <div className="hotel-listings-grid">
+          <div className="room-type-cards">
             {filteredListings.map((hotel) => (
-              <article key={hotel.id} className="hotel-card">
-                <div className="hotel-card-image">
-                  <img src={hotel.image} alt="" />
-                  <span className="hotel-card-badge">{hotel.badge}</span>
-                </div>
-                <div className="hotel-card-content">
-                  <div className="hotel-card-top">
-                    <div>
-                      <h3>{hotel.name}</h3>
-                      <p className="hotel-card-meta">
-                        {hotel.rating.toFixed(1)} guest score · {hotel.reviews.toLocaleString()} reviews
-                      </p>
-                    </div>
-                    <div className="hotel-rating" aria-hidden="true">
-                      <span>{hotel.badge}</span>
-                      <div>{hotel.rating}</div>
-                    </div>
-                  </div>
-                  <div className="hotel-amenities">
-                    {hotel.amenities.slice(0, 4).map((amenity) => (
-                      <span key={amenity}>{amenity}</span>
-                    ))}
-                  </div>
-                  <p className="hotel-description">{hotel.description}</p>
-                  <div className="hotel-card-footer">
-                    <div>
-                      <span>From per night</span>
-                      <strong>₱ {hotel.price.toLocaleString()}</strong>
-                    </div>
-                    <button
-                      type="button"
-                      className="check-availability-btn"
-                      onClick={() => onNavigate('roombooking', { roomType: hotel.roomType.toLowerCase() })}
-                    >
-                      Check availability
-                    </button>
-                  </div>
-                </div>
-              </article>
+              <RoomTypeCard key={hotel.id} hotel={hotel} onNavigate={onNavigate} />
             ))}
           </div>
         </section>

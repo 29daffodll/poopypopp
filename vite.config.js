@@ -7,9 +7,11 @@ export default defineConfig({
   // Allow existing NEXT_PUBLIC_* env vars (common with Next.js templates) alongside VITE_*.
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   server: {
+    port: 5174,
+    strictPort: true,
     proxy: {
       '/create-checkout-session': {
-        target: 'http://localhost:5174',
+        target: 'http://localhost:5175',
         changeOrigin: true,
         secure: false
       }

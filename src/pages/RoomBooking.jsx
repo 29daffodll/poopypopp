@@ -30,8 +30,10 @@ const roomOptions = [
   { id: 'suite', title: 'Suite', price: '$250/night', dbRoomId: 53, pricePerNight: 250 }
 ]
 
-export default function RoomBooking({ onBack, initialRoomType, initialCheckInDate, initialCheckOutDate }) {
+export default function RoomBooking({ userType, onBack, initialRoomType, initialCheckInDate, initialCheckOutDate, initialOpenBookingModal }) {
+  const isAdmin = String(userType ?? '').toLowerCase() === 'admin'
   const [showBookingModal, setShowBookingModal] = useState(false)
+  const [hasAutoOpened, setHasAutoOpened] = useState(false)
   const [bookingData, setBookingData] = useState(() => {
     const def = readDefaultGuestId()
     return {
@@ -119,7 +121,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      if (!isSupabaseConfigured()) {
+      if (!isAdmin || !isSupabaseConfigured()) {
         setRoomBookings([])
         return
       }
@@ -129,13 +131,24 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
     return () => {
       cancelled = true
     }
-  }, [bookingData.roomType, loadRoomBookings])
+  }, [bookingData.roomType, loadRoomBookings, isAdmin])
 
   useEffect(() => {
+    if (initialOpenBookingModal && !hasAutoOpened) {
+      setShowBookingModal(true)
+      setHasAutoOpened(true)
+    }
+  }, [initialOpenBookingModal, hasAutoOpened])
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setAllBookings([])
+      return
+    }
     queueMicrotask(() => {
       void loadAllBookings()
     })
-  }, [loadAllBookings])
+  }, [loadAllBookings, isAdmin])
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -353,51 +366,53 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
         <h2>Room Booking</h2>
       </div>
       {supabaseLive ? (
-        <div className="room-supabase-disclosure">
-          <button
-            type="button"
-            className="room-supabase-disclosure-toggle"
-            onClick={() => setShowSupabaseDetails((v) => !v)}
-            aria-expanded={showSupabaseDetails}
-            aria-controls="supabase-connection-details"
-            id="supabase-disclosure-btn"
-          >
-            <span className="room-supabase-disclosure-chevron" aria-hidden>
-              {showSupabaseDetails ? '▼' : '▶'}
-            </span>
-            <span className="room-supabase-disclosure-label">Supabase connection</span>
-            <span className="room-supabase-disclosure-badge">live</span>
-            <span className="room-supabase-disclosure-hint">
-              {showSupabaseDetails ? 'Hide details' : `Show details · roomid ${activeRoom.dbRoomId}`}
-            </span>
-          </button>
-          {showSupabaseDetails && (
-            <div
-              className="room-supabase-disclosure-body"
-              id="supabase-connection-details"
-              role="region"
-              aria-labelledby="supabase-disclosure-btn"
+        isAdmin ? (
+          <div className="room-supabase-disclosure">
+            <button
+              type="button"
+              className="room-supabase-disclosure-toggle"
+              onClick={() => setShowSupabaseDetails((v) => !v)}
+              aria-expanded={showSupabaseDetails}
+              aria-controls="supabase-connection-details"
+              id="supabase-disclosure-btn"
             >
-              <p>
-                Live data from your <code>bookings</code> table appears below. The booking form only needs a guest name and dates.
-                Room categories are mapped to room IDs automatically.
-              </p>
-              <p>
-                Current category <strong>{activeRoom.title}</strong> maps to <code>roomid</code>{' '}
-                <strong>{activeRoom.dbRoomId}</strong> (edit <code>dbRoomId</code> in RoomBooking.jsx if it does not
-                match your <code>rooms</code> table).
-              </p>
-              <p>
-                If your schema does not include a <code>guests</code> table, the booking will still work using a fallback guest reference.
-              </p>
-              <div className="room-supabase-disclosure-actions">
-                <button type="button" className="room-supabase-refresh" onClick={() => void loadAllBookings()}>
-                  Refresh list
-                </button>
+              <span className="room-supabase-disclosure-chevron" aria-hidden>
+                {showSupabaseDetails ? '▼' : '▶'}
+              </span>
+              <span className="room-supabase-disclosure-label">Supabase connection</span>
+              <span className="room-supabase-disclosure-badge">live</span>
+              <span className="room-supabase-disclosure-hint">
+                {showSupabaseDetails ? 'Hide details' : `Show details · roomid ${activeRoom.dbRoomId}`}
+              </span>
+            </button>
+            {showSupabaseDetails && (
+              <div
+                className="room-supabase-disclosure-body"
+                id="supabase-connection-details"
+                role="region"
+                aria-labelledby="supabase-disclosure-btn"
+              >
+                <p>
+                  Live data from your <code>bookings</code> table appears below. The booking form only needs a guest name and dates.
+                  Room categories are mapped to room IDs automatically.
+                </p>
+                <p>
+                  Current category <strong>{activeRoom.title}</strong> maps to <code>roomid</code>{' '}
+                  <strong>{activeRoom.dbRoomId}</strong> (edit <code>dbRoomId</code> in RoomBooking.jsx if it does not
+                  match your <code>rooms</code> table).
+                </p>
+                <p>
+                  If your schema does not include a <code>guests</code> table, the booking will still work using a fallback guest reference.
+                </p>
+                <div className="room-supabase-disclosure-actions">
+                  <button type="button" className="room-supabase-refresh" onClick={() => void loadAllBookings()}>
+                    Refresh list
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        ) : null
       ) : (
         <div className="room-supabase-banner room-supabase-banner--warn" role="status">
           <strong>Supabase is not connected in this build.</strong>{' '}
@@ -412,7 +427,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
         </div>
       )}
 
-      {supabaseLive && (
+      {supabaseLive && isAdmin && (
         <div className="room-db-bookings-section room-all-bookings-section">
           <h3>All bookings</h3>
           <p className="room-db-bookings-hint">
@@ -500,7 +515,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
         </button>
       </div>
 
-      {supabaseLive && (
+      {supabaseLive && isAdmin && (
         <div className="room-db-bookings-section">
           <h3>Reservations for this room</h3>
           {roomBookingsLoading && <p className="room-db-bookings-muted">Loading…</p>}
