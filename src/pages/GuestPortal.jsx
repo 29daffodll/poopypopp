@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
+import { getSupabase, isSupabaseConfigured } from '../lib/supabaseClient'
 
 const roomServiceMenu = {
-  food: [
+  room_service: [
     { id: 'club-sandwich', title: 'Club Sandwich', description: 'Grilled chicken, bacon, lettuce & tomato', price: '₱450' },
     { id: 'caesar-salad', title: 'Caesar Salad', description: 'Crisp romaine, parmesan & house dressing', price: '₱320' },
     { id: 'margherita-pizza', title: 'Margherita Pizza', description: 'Classic tomato, mozzarella & basil', price: '₱620' },
@@ -12,7 +13,7 @@ const roomServiceMenu = {
     { id: 'steak-salad', title: 'Steak Salad', description: 'Sliced steak, greens & balsamic glaze', price: '₱720' },
     { id: 'chocolate-mousse', title: 'Chocolate Mousse', description: 'Rich and creamy dessert', price: '₱280' }
   ],
-  'mini-bar': [
+  mini_bar: [
     { id: 'sparkling-water', title: 'Sparkling Water', description: 'Refreshing mineral water', price: '₱120' },
     { id: 'orange-juice', title: 'Orange Juice', description: 'Fresh squeezed orange juice', price: '₱140' },
     { id: 'beer', title: 'Craft Beer', description: 'Local craft lager', price: '₱180' },
@@ -50,6 +51,7 @@ const roomServiceMenu = {
 const mockBookings = [
   {
     id: 'BK001',
+    bookingId: 40,
     roomNumber: 101,
     roomType: 'Suite',
     checkIn: '2026-04-27',
@@ -97,7 +99,7 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
   const [showHousekeeping, setShowHousekeeping] = useState(false)
   const [modifyDates, setModifyDates] = useState({ checkIn: '', checkOut: '' })
   const [serviceRequest, setServiceRequest] = useState({
-    type: 'food',
+    type: 'room_service',
     description: '',
     itemsOrdered: []
   })
@@ -108,11 +110,90 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
     priority: 'normal',
     requestedTime: ''
   })
+  const [serviceRequests, setServiceRequests] = useState([])
+  const [loadingServices, setLoadingServices] = useState(false)
+  const [serviceError, setServiceError] = useState('')
+  const [requestLoading, setRequestLoading] = useState(false)
   const [portalNotice, setPortalNotice] = useState(null)
+
+  const supabaseLive = isSupabaseConfigured()
+  const activeBooking = mockBookings.find((booking) => booking.status === 'Confirmed' || booking.status === 'Pending')
+  const defaultBookingId = activeBooking?.bookingId ?? null
 
   const showNotice = useCallback((text, type = 'success') => {
     setPortalNotice({ text, type })
   }, [])
+
+  const loadServiceRequests = useCallback(async () => {
+    if (!supabaseLive) {
+      setServiceRequests([])
+      return
+    }
+
+    const supabase = getSupabase()
+    if (!supabase) {
+      setServiceRequests([])
+      return
+    }
+
+    setLoadingServices(true)
+    setServiceError('')
+    try {
+      const { data, error } = await supabase
+        .from('servicerequests')
+        .select('*')
+        .order('requestedat', { ascending: false })
+        .limit(100)
+      if (error) throw error
+      setServiceRequests(data ?? [])
+    } catch (err) {
+      setServiceError(err.message || String(err))
+      setServiceRequests([])
+    } finally {
+      setLoadingServices(false)
+    }
+  }, [supabaseLive])
+
+  const createServiceRequest = useCallback(
+    async ({ servicetype, notes }) => {
+      if (!supabaseLive) {
+        showNotice('Supabase is not configured. Service requests are only simulated.', 'info')
+        return false
+      }
+
+      const supabase = getSupabase()
+      if (!supabase) {
+        showNotice('Supabase client is not available.', 'error')
+        return false
+      }
+
+      setRequestLoading(true)
+      setServiceError('')
+      try {
+        const payload = {
+          servicetype,
+          status: 'pending',
+          notes: notes ? String(notes).trim() : null,
+          requestedat: new Date().toISOString()
+        }
+        const bookingId = selectedBooking?.bookingId ?? defaultBookingId
+        if (bookingId != null) {
+          payload.bookingid = bookingId
+        }
+
+        const { error } = await supabase.from('servicerequests').insert(payload)
+        if (error) throw error
+        await loadServiceRequests()
+        return true
+      } catch (err) {
+        setServiceError(err.message || String(err))
+        return false
+      } finally {
+        setRequestLoading(false)
+      }
+    },
+    [defaultBookingId, loadServiceRequests, selectedBooking, showNotice, supabaseLive]
+  )
 
   useEffect(() => {
     if (!portalNotice) return undefined
@@ -132,6 +213,11 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [showCancelConfirm, showModifyForm, showRoomService, showHousekeeping, selectedBooking])
+
+  useEffect(() => {
+    if (!supabaseLive) return
+    void loadServiceRequests()
+  }, [loadServiceRequests, supabaseLive])
 
   const guestEmail = user?.email ?? user?.name ?? 'Guest'
 
@@ -155,11 +241,6 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
           </button>
         )}
       </header>
-
-      <p className="guest-portal-intro">
-        View demo reservations below, open a stay for details, or use guest services. Live booking data can be wired
-        to Supabase the same way as staff tools when you are ready.
-      </p>
 
       {portalNotice && (
         <div
@@ -215,7 +296,11 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
       <section className="services-container" aria-labelledby="gp-services-title">
         <div className="guest-portal-section-head">
           <h3 id="gp-services-title">Guest services</h3>
-          <span className="guest-portal-section-hint">Requests are simulated in this build</span>
+          <span className="guest-portal-section-hint">
+            {supabaseLive
+              ? 'Requests are stored in Supabase when connected.'
+              : 'Supabase not configured; service requests are shown only as simulation.'}
+          </span>
         </div>
         <div className="services-grid">
           <button type="button" className="service-card" onClick={() => setShowRoomService(true)}>
@@ -235,7 +320,13 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
           <button
             type="button"
             className="service-card"
-            onClick={() => showNotice('Maintenance requests are routed to the front desk in a full deployment.', 'info')}
+            onClick={async () => {
+              const success = await createServiceRequest({
+                servicetype: 'maintenance',
+                notes: 'Guest requested maintenance from the portal.'
+              })
+              if (success) showNotice('Maintenance request submitted.', 'success')
+            }}
           >
             <span className="service-icon" aria-hidden="true">
               🔧
@@ -246,7 +337,13 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
           <button
             type="button"
             className="service-card"
-            onClick={() => showNotice('Concierge chat and bookings are not connected in this demo.', 'info')}
+            onClick={async () => {
+              const success = await createServiceRequest({
+                servicetype: 'concierge',
+                notes: 'Guest requested concierge assistance from the portal.'
+              })
+              if (success) showNotice('Concierge request submitted.', 'success')
+            }}
           >
             <span className="service-icon" aria-hidden="true">
               📞
@@ -254,10 +351,6 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
             <h4>Concierge</h4>
             <p>Help with local tips and reservations</p>
           </button>
-        </div>
-        <div className="service-requests">
-          <h4>Recent requests</h4>
-          <p className="no-requests">No active service requests</p>
         </div>
       </section>
 
@@ -438,18 +531,47 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
             <h3>Room service</h3>
             <p className="guest-portal-modal-lead">Select items, add notes, and place a demo order.</p>
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault()
-                showNotice(
-                  serviceRequest.itemsOrdered.length
-                    ? `Order placed (${serviceRequest.itemsOrdered.length} item(s)). Estimated delivery 30–45 minutes (demo).`
-                    : 'Please select at least one item.',
-                  serviceRequest.itemsOrdered.length ? 'success' : 'info'
-                )
-                if (!serviceRequest.itemsOrdered.length) return
-                setShowRoomService(false)
-                setServiceRequest({ type: 'food', description: '', itemsOrdered: [] })
-                setLeaveAtDoor(false)
+                if (!serviceRequest.itemsOrdered.length) {
+                  showNotice('Please select at least one item.', 'info')
+                  return
+                }
+
+                const summary = serviceRequest.itemsOrdered
+                  .map((id) => roomServiceMenu[serviceRequest.type].find((item) => item.id === id)?.title ?? id)
+                  .join(', ')
+                const notes = [
+                  `Category: ${serviceRequest.type.replace('_', ' ')}`,
+                  summary,
+                  serviceRequest.description,
+                  leaveAtDoor ? 'Leave at door.' : null
+                ]
+                  .filter(Boolean)
+                  .join(' | ')
+                const serviceType = serviceRequest.type
+
+                if (!supabaseLive) {
+                  showNotice(
+                    `Room service request simulated (${serviceRequest.itemsOrdered.length} item(s)).`,
+                    'info'
+                  )
+                  setShowRoomService(false)
+                  setServiceRequest({ type: 'room_service', description: '', itemsOrdered: [] })
+                  setLeaveAtDoor(false)
+                  return
+                }
+
+                const success = await createServiceRequest({
+                  servicetype: serviceType,
+                  notes
+                })
+                if (success) {
+                  showNotice('Room service request submitted.', 'success')
+                  setShowRoomService(false)
+                  setServiceRequest({ type: 'room_service', description: '', itemsOrdered: [] })
+                  setLeaveAtDoor(false)
+                }
               }}
             >
               <div className="form-group">
@@ -465,8 +587,8 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
                     })
                   }
                 >
-                  <option value="food">Food &amp; beverages</option>
-                  <option value="mini-bar">Mini bar</option>
+                  <option value="room_service">Food & beverages</option>
+                  <option value="mini_bar">Mini bar</option>
                   <option value="laundry">Laundry</option>
                   <option value="grocery">Grocery</option>
                 </select>
@@ -527,8 +649,8 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
                   Leave at door (do not disturb)
                 </label>
               </div>
-              <button type="submit" className="btn-primary">
-                Place order
+              <button type="submit" className="btn-primary" disabled={requestLoading}>
+                {requestLoading ? 'Submitting…' : 'Place order'}
               </button>
             </form>
           </div>
@@ -544,11 +666,32 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
             <h3>Housekeeping</h3>
             <p className="guest-portal-modal-lead">Tell us what you need; this demo only shows a confirmation.</p>
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault()
-                showNotice('Housekeeping request received. The team will follow up (demo).', 'success')
-                setShowHousekeeping(false)
-                setHousekeepingRequest({ type: 'cleaning', description: '', priority: 'normal', requestedTime: '' })
+                const notes = [
+                  housekeepingRequest.description,
+                  `Priority: ${housekeepingRequest.priority}`,
+                  housekeepingRequest.requestedTime ? `Preferred time: ${housekeepingRequest.requestedTime}` : null
+                ]
+                  .filter(Boolean)
+                  .join(' | ')
+
+                if (!supabaseLive) {
+                  showNotice('Housekeeping request simulated. The team will follow up (demo).', 'info')
+                  setShowHousekeeping(false)
+                  setHousekeepingRequest({ type: 'cleaning', description: '', priority: 'normal', requestedTime: '' })
+                  return
+                }
+
+                const success = await createServiceRequest({
+                  servicetype: 'housekeeping',
+                  notes: `Type: ${housekeepingRequest.type} | ${notes}`
+                })
+                if (success) {
+                  showNotice('Housekeeping request submitted.', 'success')
+                  setShowHousekeeping(false)
+                  setHousekeepingRequest({ type: 'cleaning', description: '', priority: 'normal', requestedTime: '' })
+                }
               }}
             >
               <div className="form-group">
@@ -596,8 +739,8 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
                   onChange={(e) => setHousekeepingRequest({ ...housekeepingRequest, requestedTime: e.target.value })}
                 />
               </div>
-              <button type="submit" className="btn-primary">
-                Submit request
+              <button type="submit" className="btn-primary" disabled={requestLoading}>
+                {requestLoading ? 'Submitting…' : 'Submit request'}
               </button>
             </form>
           </div>

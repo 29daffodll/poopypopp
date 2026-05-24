@@ -317,12 +317,6 @@ export default function CheckIn({ onBack }) {
         <h2>Check In</h2>
       </div>
 
-      <p className="checkin-intro">
-        Pick an <strong>available</strong> room from your <code>rooms</code> table, confirm guest and dates, then
-        submit. The room becomes <code>occupied</code>; if you enter a numeric guest ID, a matching row is created in{' '}
-        <code>bookings</code> for check-out later.
-      </p>
-
       {!supabaseLive && (
         <div className="room-supabase-banner room-supabase-banner--warn checkin-banner" role="status">
           <strong>Supabase not connected.</strong> Showing demo rooms only — no database updates.{' '}

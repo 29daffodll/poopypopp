@@ -170,15 +170,6 @@ export default function DigitalKeys({ onBack }) {
         )}
       </div>
 
-      <div className="instructions-box">
-        <h3>How to Use Your Digital Key</h3>
-        <ol>
-          <li><strong>Activate:</strong> Click "Activate Key Now" when ready</li>
-          <li><strong>Show QR Code:</strong> Display the QR code at the hotel entrance</li>
-          <li><strong>Alternative:</strong> Use the access code at the digital lock</li>
-          <li><strong>Access:</strong> Your key works from check-in to check-out time</li>
-        </ol>
-      </div>
     </div>
   )
 }

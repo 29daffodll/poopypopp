@@ -24,11 +24,6 @@ export default function FoodDrinks({ onBack }) {
         <h2>Food & drinks</h2>
       </div>
 
-      <p className="fd-intro">
-        One place for guests and staff: <strong>Food</strong> and <strong>Drinks</strong> on separate tabs below.
-        Wire this to menus, hours, and ordering when you add Supabase tables or an external POS.
-      </p>
-
       <div className="fd-tabs" role="tablist" aria-label="Food and drinks">
         <button
           type="button"

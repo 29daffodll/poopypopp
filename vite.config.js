@@ -6,4 +6,13 @@ export default defineConfig({
   plugins: [react()],
   // Allow existing NEXT_PUBLIC_* env vars (common with Next.js templates) alongside VITE_*.
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
+  server: {
+    proxy: {
+      '/create-checkout-session': {
+        target: 'http://localhost:5174',
+        changeOrigin: true,
+        secure: false
+      }
+    }
+  }
 })

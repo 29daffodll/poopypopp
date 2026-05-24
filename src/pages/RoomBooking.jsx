@@ -15,6 +15,15 @@ function readDefaultGuestId() {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
+function bookingPk(row) {
+  return pick(row, 'bookingid', 'booking_id', 'id')
+}
+
+function getRoomIdForType(roomType) {
+  const room = roomOptions.find((r) => r.id === roomType)
+  return room?.dbRoomId ?? roomOptions[0].dbRoomId
+}
+
 const roomOptions = [
   { id: 'single', title: 'Single Room', price: '$100/night', dbRoomId: 51, pricePerNight: 100 },
   { id: 'double', title: 'Double Room', price: '$150/night', dbRoomId: 52, pricePerNight: 150 },
@@ -42,12 +51,16 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
   const [allBookings, setAllBookings] = useState([])
   const [allBookingsLoading, setAllBookingsLoading] = useState(false)
   const [allBookingsError, setAllBookingsError] = useState('')
+  const [editingBookingId, setEditingBookingId] = useState(null)
+  const [tableActionError, setTableActionError] = useState('')
+  const [actionId, setActionId] = useState(null)
   const [showSupabaseDetails, setShowSupabaseDetails] = useState(false)
 
   const activeRoom = useMemo(
     () => roomOptions.find((r) => r.id === bookingData.roomType) ?? roomOptions[0],
     [bookingData.roomType]
   )
+  const isEditing = editingBookingId != null
 
   const loadAllBookings = useCallback(async () => {
     const supabase = getSupabase()
@@ -152,6 +165,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
 
   const resetBookingForm = (roomForType = null) => {
     const def = readDefaultGuestId()
+    setEditingBookingId(null)
     setBookingData({
       guestName: '',
       guestId: def != null ? String(def) : '',
@@ -162,13 +176,68 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
     })
   }
 
+  const handleEditBooking = (row) => {
+    const bid = bookingPk(row)
+    if (bid == null) return
+
+    const roomId = Number(pick(row, 'roomid', 'room_id'))
+    const roomType = roomOptions.find((r) => r.dbRoomId === roomId)?.id || 'single'
+    setEditingBookingId(bid)
+    setBookingData({
+      guestName: String(pick(row, 'guestname', 'guest_name', 'name') ?? ''),
+      guestId: String(pick(row, 'guestid', 'guest_id') ?? readDefaultGuestId() ?? ''),
+      roomType,
+      checkInDate: String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? ''),
+      checkOutDate: String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? ''),
+      numGuests: Number(pick(row, 'numguests', 'num_guests', 'numGuests') || 1)
+    })
+    setShowBookingModal(true)
+  }
+
+  const handleCancelBooking = async (row) => {
+    setTableActionError('')
+    setActionId(null)
+    const bid = bookingPk(row)
+    if (bid == null) {
+      setTableActionError('Could not determine booking ID for cancel action.')
+      return
+    }
+
+    if (!window.confirm(`Cancel booking #${bid}? This will mark it as cancelled in the bookings table.`)) {
+      return
+    }
+
+    const supabase = getSupabase()
+    if (!supabase) {
+      setTableActionError('Supabase is not configured. Connect Supabase to cancel real bookings.')
+      return
+    }
+
+    setActionId(bid)
+    const patch = { status: 'cancelled' }
+    let res = await supabase.from('bookings').update(patch).eq('bookingid', bid)
+    if (res.error) {
+      res = await supabase.from('bookings').update(patch).eq('booking_id', bid)
+    }
+    setActionId(null)
+
+    if (res.error) {
+      setTableActionError(res.error.message)
+      return
+    }
+
+    await loadRoomBookings(activeRoom)
+    await loadAllBookings()
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSubmitError('')
     const supabase = getSupabase()
 
     if (!supabase) {
-      alert(`Booking confirmed for ${bookingData.guestName} in the ${activeRoom.title}`)
+      const verb = editingBookingId ? 'updated' : 'confirmed'
+      alert(`Booking ${verb} for ${bookingData.guestName} in the ${activeRoom.title}`)
       setShowBookingModal(false)
       resetBookingForm(null)
       return
@@ -176,12 +245,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
 
     const defaultGid = readDefaultGuestId()
     const gid = Number(String(bookingData.guestId).trim()) || defaultGid
-    if (!Number.isFinite(gid) || gid <= 0) {
-      setSubmitError(
-        'Enter your numeric guest ID (must match a row in your guests table), or set VITE_DEFAULT_GUEST_ID in .env.local for testing.'
-      )
-      return
-    }
+    const hasGuestId = Number.isFinite(gid) && gid > 0
 
     const checkIn = new Date(`${bookingData.checkInDate}T12:00:00`)
     const checkOut = new Date(`${bookingData.checkOutDate}T12:00:00`)
@@ -198,19 +262,68 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
 
     const total = nights * activeRoom.pricePerNight
 
+    let bookingGuestId = hasGuestId ? gid : null
+    if (!bookingGuestId) {
+      const guestName = String(bookingData.guestName ?? '').trim()
+      if (!guestName) {
+        setSubmitError('Guest name is required to auto-create a guest record.')
+        return
+      }
+
+      const newGuest = await supabase
+        .from('guests')
+        .insert({ guestname: guestName })
+        .select('guestid, guest_id, id')
+        .single()
+
+      if (newGuest.error) {
+        const message = String(newGuest.error.message || '')
+        if (message.includes('Could not find the table') || message.includes('find the table')) {
+          bookingGuestId = 1
+        } else {
+          setSubmitError(`Could not auto-create guest record: ${newGuest.error.message}`)
+          setSubmitLoading(false)
+          return
+        }
+      } else {
+        bookingGuestId = Number(pick(newGuest.data, 'guestid', 'guest_id', 'id'))
+      }
+
+      if (!Number.isFinite(bookingGuestId) || bookingGuestId <= 0) {
+        setSubmitError('Unable to determine a valid guest ID for the new guest record.')
+        setSubmitLoading(false)
+        return
+      }
+    }
+
+    const payload = {
+      guestid: bookingGuestId,
+      roomid: activeRoom.dbRoomId,
+      checkindate: bookingData.checkInDate,
+      checkoutdate: bookingData.checkOutDate,
+      totalamount: total
+    }
+
     setSubmitLoading(true)
-    const { data, error } = await supabase
-      .from('bookings')
-      .insert({
-        guestid: gid,
-        roomid: activeRoom.dbRoomId,
-        checkindate: bookingData.checkInDate,
-        checkoutdate: bookingData.checkOutDate,
-        totalamount: total,
-        status: 'pending'
-      })
-      .select('bookingid')
-      .single()
+    let data = null
+    let error = null
+
+    if (editingBookingId) {
+      let res = await supabase.from('bookings').update(payload).eq('bookingid', editingBookingId).select('bookingid')
+      if (res.error) {
+        res = await supabase.from('bookings').update(payload).eq('booking_id', editingBookingId).select('booking_id')
+      }
+      data = res.data
+      error = res.error
+    } else {
+      const res = await supabase
+        .from('bookings')
+        .insert({ ...payload, status: 'pending' })
+        .select('bookingid')
+        .single()
+      data = res.data
+      error = res.error
+    }
     setSubmitLoading(false)
 
     if (error) {
@@ -218,8 +331,11 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
       return
     }
 
+    const id = pick(data?.[0] ?? data, 'bookingid', 'booking_id')
     alert(
-      `Booking saved. Reference #${pick(data, 'bookingid', 'booking_id') ?? '?'} (${nights} night(s), total $${total.toFixed(2)})`
+      editingBookingId
+        ? `Booking #${id ?? '?'} updated (${nights} night(s), total $${total.toFixed(2)})`
+        : `Booking saved. Reference #${id ?? '?'} (${nights} night(s), total $${total.toFixed(2)})`
     )
     setShowBookingModal(false)
     resetBookingForm(activeRoom)
@@ -236,7 +352,6 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
         <button className="back-btn" onClick={onBack}>← Back</button>
         <h2>Room Booking</h2>
       </div>
-
       {supabaseLive ? (
         <div className="room-supabase-disclosure">
           <button
@@ -264,13 +379,16 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
               aria-labelledby="supabase-disclosure-btn"
             >
               <p>
-                Live data from your <code>bookings</code> table appears below, and the per-room list uses the{' '}
-                <code>roomid</code> for the room category you select on this page.
+                Live data from your <code>bookings</code> table appears below. The booking form only needs a guest name and dates.
+                Room categories are mapped to room IDs automatically.
               </p>
               <p>
                 Current category <strong>{activeRoom.title}</strong> maps to <code>roomid</code>{' '}
                 <strong>{activeRoom.dbRoomId}</strong> (edit <code>dbRoomId</code> in RoomBooking.jsx if it does not
                 match your <code>rooms</code> table).
+              </p>
+              <p>
+                If your schema does not include a <code>guests</code> table, the booking will still work using a fallback guest reference.
               </p>
               <div className="room-supabase-disclosure-actions">
                 <button type="button" className="room-supabase-refresh" onClick={() => void loadAllBookings()}>
@@ -296,9 +414,13 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
 
       {supabaseLive && (
         <div className="room-db-bookings-section room-all-bookings-section">
-          <h3>All bookings (database)</h3>
+          <h3>All bookings</h3>
+          <p className="room-db-bookings-hint">
+            Review all reservations and use Edit or Cancel to update existing rows.
+          </p>
           {allBookingsLoading && <p className="room-db-bookings-muted">Loading…</p>}
           {allBookingsError && <p className="booking-form-error">{allBookingsError}</p>}
+          {tableActionError && <p className="booking-form-error">{tableActionError}</p>}
           {!allBookingsLoading && !allBookingsError && allBookings.length === 0 && (
             <p className="room-db-bookings-muted">No rows returned from <code>bookings</code> (empty table or RLS blocking read).</p>
           )}
@@ -314,11 +436,13 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
                     <th>Check-out</th>
                     <th>Total</th>
                     <th>Status</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {allBookings.map((row, idx) => {
-                    const bid = pick(row, 'bookingid', 'booking_id', 'id')
+                    const bid = bookingPk(row)
+                    const busy = actionId != null && String(actionId) === String(bid)
                     return (
                       <tr key={bid != null ? `booking-${bid}` : `row-${idx}`}>
                         <td>{bid ?? '—'}</td>
@@ -333,6 +457,19 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
                           })()}
                         </td>
                         <td>{String(pick(row, 'status') ?? '—')}</td>
+                        <td>
+                          <button type="button" className="submit-btn" onClick={() => handleEditBooking(row)}>
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="cancel-btn"
+                            disabled={busy}
+                            onClick={() => void handleCancelBooking(row)}
+                          >
+                            {busy ? 'Cancelling…' : 'Cancel'}
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
@@ -381,11 +518,13 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
                     <th>Check-out</th>
                     <th>Total</th>
                     <th>Status</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {roomBookings.map((row, idx) => {
-                    const bid = pick(row, 'bookingid', 'booking_id', 'id')
+                    const bid = bookingPk(row)
+                    const busy = actionId != null && String(actionId) === String(bid)
                     return (
                       <tr key={bid != null ? `rb-${bid}` : `r-${idx}`}>
                         <td>{bid ?? '—'}</td>
@@ -398,6 +537,19 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
                           })()}
                         </td>
                         <td>{String(pick(row, 'status') ?? '—')}</td>
+                        <td>
+                          <button type="button" className="submit-btn" onClick={() => handleEditBooking(row)}>
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="cancel-btn"
+                            disabled={busy}
+                            onClick={() => void handleCancelBooking(row)}
+                          >
+                            {busy ? 'Cancelling…' : 'Cancel'}
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
@@ -412,7 +564,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
         <div className="modal-overlay" onClick={() => setShowBookingModal(false)}>
           <div className="booking-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>New booking — {activeRoom.title}</h2>
+              <h2>{isEditing ? `Edit booking #${editingBookingId}` : `New booking — ${activeRoom.title}`}</h2>
               <button type="button" className="modal-close-btn" onClick={() => setShowBookingModal(false)}>
                 ✕
               </button>
@@ -420,7 +572,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
             <p className="modal-room-line">{activeRoom.price}</p>
 
             <form onSubmit={handleSubmit} className="booking-form">
-              <div className="form-group">
+                <div className="form-group">
                 <label>Guest Name *</label>
                 <input
                   type="text"
@@ -428,27 +580,12 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
                   value={bookingData.guestName}
                   onChange={handleChange}
                   required
+                  placeholder="e.g. Sarah Lopez"
                 />
+                <p className="room-db-bookings-hint">
+                  Only the guest name is needed here. The booking system automatically generates or assigns a guest ID.
+                </p>
               </div>
-
-              {supabaseLive && (
-                <div className="form-group">
-                  <label>Guest ID *</label>
-                  <input
-                    type="number"
-                    name="guestId"
-                    min="1"
-                    step="1"
-                    value={bookingData.guestId}
-                    onChange={handleChange}
-                    required={readDefaultGuestId() == null}
-                    placeholder={readDefaultGuestId() != null ? `Optional — default ${readDefaultGuestId()} from env` : 'e.g. 85'}
-                  />
-                  <p className="room-db-bookings-hint">
-                    Must match <code>guestid</code> in your database. Optional if <code>VITE_DEFAULT_GUEST_ID</code> is set.
-                  </p>
-                </div>
-              )}
 
               <div className="form-group">
                 <label>Check-in Date *</label>
@@ -492,7 +629,7 @@ export default function RoomBooking({ onBack, initialRoomType, initialCheckInDat
                   Cancel
                 </button>
                 <button type="submit" className="submit-btn" disabled={submitLoading}>
-                  {submitLoading ? 'Saving…' : 'Confirm Booking'}
+                  {submitLoading ? 'Saving…' : isEditing ? 'Save changes' : 'Confirm Booking'}
                 </button>
               </div>
             </form>

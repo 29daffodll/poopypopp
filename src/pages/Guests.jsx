@@ -118,11 +118,6 @@ export default function Guests({ onBack }) {
         <h2>Guests Management</h2>
       </div>
 
-      <p className="guests-intro">
-        Guest accounts from your <span className="guests-kbd">users</span> table (<span className="guests-kbd">role</span>{' '}
-        = guest). Password hashes are never selected in the app.
-      </p>
-
       {supabaseLive && (
         <div className="guests-toolbar">
           {loading && remoteRows === null && <span className="guests-toolbar-status">Loading guests…</span>}

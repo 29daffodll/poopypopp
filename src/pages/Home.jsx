@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getSupabase, isSupabaseConfigured } from '../lib/supabaseClient'
+import { compareSync, hashSync } from 'bcryptjs'
 
 function addDaysYmd(days) {
   const d = new Date()
@@ -54,13 +56,15 @@ export default function Home({ onNavigate, onLogin }) {
     checkOut: addDaysYmd(3)
   })
   const [showLoginModal, setShowLoginModal] = useState(false)
-  const [loginType, setLoginType] = useState('admin')
+  const [authMode, setAuthMode] = useState('login')
   const [credentials, setCredentials] = useState({
     email: '',
-    password: ''
+    password: '',
+    name: ''
   })
   const [loginError, setLoginError] = useState('')
   const [searchHint, setSearchHint] = useState('')
+  const [supabaseLive, setSupabaseLive] = useState(() => isSupabaseConfigured())
 
   const filteredListings = useMemo(() => hotelListings, [])
 
@@ -81,6 +85,9 @@ export default function Home({ onNavigate, onLogin }) {
 
   const openLogin = useCallback(() => {
     setLoginError('')
+    setAuthMode('login')
+    setCredentials({ email: '', password: '', name: '' })
+    setSupabaseLive(isSupabaseConfigured())
     setShowLoginModal(true)
   }, [])
 
@@ -98,30 +105,118 @@ export default function Home({ onNavigate, onLogin }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [showLoginModal, closeLogin])
 
-  const handleLoginSubmit = (e) => {
+  const handleLoginSubmit = async (e) => {
     e.preventDefault()
     setLoginError('')
 
-    if (loginType === 'admin') {
-      if (credentials.email === 'admin@hotel.com' && credentials.password === 'admin123') {
-        onLogin('admin', {
-          name: 'Admin User',
-          email: credentials.email,
-          rank: 'Administrator'
+    const email = String(credentials.email ?? '').trim().toLowerCase()
+    const password = String(credentials.password ?? '')
+    const name = String(credentials.name ?? '').trim()
+    if (!email || !password) {
+      setLoginError('Enter both email and password.')
+      return
+    }
+
+    if (authMode === 'signup') {
+      if (!supabaseLive) {
+        setLoginError('Sign-up requires Supabase configuration.')
+        return
+      }
+      const supabase = getSupabase()
+      if (!supabase) {
+        setLoginError('Unable to connect to Supabase.')
+        return
+      }
+
+      if (!name) {
+        setLoginError('Enter a name for your guest account.')
+        return
+      }
+
+      try {
+        const hash = hashSync(password, 10)
+        const { error } = await supabase.from('users').insert({
+          username: name,
+          email: email,
+          password: hash,
+          role: 'guest'
+        })
+
+        if (error) {
+          if (error.code === '23505' || /duplicate/i.test(error.message)) {
+            setLoginError('An account with that email already exists.')
+            return
+          }
+          throw error
+        }
+
+        onLogin('guest', {
+          name,
+          email,
+          role: 'guest'
         })
         closeLogin()
-      } else {
-        setLoginError('Invalid email or password. Use the demo credentials below.')
+      } catch (err) {
+        setLoginError(err.message || 'Unable to create account. Try again.')
       }
-    } else if (credentials.email.trim()) {
+      return
+    }
+
+    if (!supabaseLive) {
+      if (email === 'admin@hotel.com' && password === 'admin123') {
+        onLogin('admin', {
+          name: 'Admin User',
+          email,
+          role: 'admin'
+        })
+        closeLogin()
+        return
+      }
+
       onLogin('guest', {
-        name: credentials.email.trim(),
-        email: credentials.email.trim(),
-        rank: 'Guest'
+        name: email,
+        email,
+        role: 'guest'
       })
       closeLogin()
-    } else {
-      setLoginError('Please enter the email address you used when booking.')
+      return
+    }
+
+    const supabase = getSupabase()
+    if (!supabase) {
+      setLoginError('Unable to connect to Supabase.')
+      return
+    }
+
+    try {
+      const { data: user, error } = await supabase
+        .from('users')
+        .select('*')
+        .ilike('email', email)
+        .limit(1)
+        .single()
+
+      if (error || !user) {
+        setLoginError('Invalid email or password.')
+        return
+      }
+
+      const hash = String(user.password ?? '')
+      if (!hash || !compareSync(password, hash)) {
+        setLoginError('Invalid email or password.')
+        return
+      }
+
+      const role = String(user.role ?? 'guest').toLowerCase()
+      const userType = role === 'admin' ? 'admin' : 'guest'
+      onLogin(userType, {
+        name: String(user.username ?? user.email ?? 'Guest'),
+        email: String(user.email ?? email),
+        role
+      })
+      closeLogin()
+    } catch (err) {
+      setLoginError(err.message || 'Login failed. Check your credentials and try again.')
     }
   }
 
@@ -317,35 +412,11 @@ export default function Home({ onNavigate, onLogin }) {
                 </div>
                 <h1 id="home-login-title">B Morvie</h1>
               </div>
-              <p className="login-subtitle">Sign in to staff tools or the guest portal</p>
-            </div>
-
-            <div className="login-tabs" role="tablist" aria-label="Account type">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={loginType === 'admin'}
-                className={`tab-btn ${loginType === 'admin' ? 'active' : ''}`}
-                onClick={() => {
-                  setLoginType('admin')
-                  setLoginError('')
-                }}
-              >
-                Admin
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={loginType === 'guest'}
-                className={`tab-btn ${loginType === 'guest' ? 'active' : ''}`}
-                onClick={() => {
-                  setLoginType('guest')
-                  setLoginError('')
-                  setCredentials((c) => ({ ...c, password: '' }))
-                }}
-              >
-                Guest
-              </button>
+              <p className="login-subtitle">
+                {authMode === 'signup'
+                  ? 'Create a new guest account'
+                  : 'Sign in to staff tools or the guest portal'}
+              </p>
             </div>
 
             {loginError && (
@@ -364,48 +435,79 @@ export default function Home({ onNavigate, onLogin }) {
                   autoComplete="email"
                   value={credentials.email}
                   onChange={handleLoginChange}
-                  placeholder={loginType === 'admin' ? 'admin@hotel.com' : 'your.email@example.com'}
+                  placeholder="your.email@example.com"
                   required
                 />
               </div>
 
-              {loginType === 'admin' && (
+              {authMode === 'signup' && (
                 <div className="form-group">
-                  <label htmlFor="home-login-password">Password</label>
+                  <label htmlFor="home-login-name">Full name</label>
                   <input
-                    id="home-login-password"
-                    type="password"
-                    name="password"
-                    autoComplete="current-password"
-                    value={credentials.password}
+                    id="home-login-name"
+                    type="text"
+                    name="name"
+                    autoComplete="name"
+                    value={credentials.name}
                     onChange={handleLoginChange}
-                    placeholder="Enter password"
+                    placeholder="Your name"
                     required
                   />
                 </div>
               )}
 
+              <div className="form-group">
+                <label htmlFor="home-login-password">Password</label>
+                <input
+                  id="home-login-password"
+                  type="password"
+                  name="password"
+                  autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                  value={credentials.password}
+                  onChange={handleLoginChange}
+                  placeholder="Enter password"
+                  required
+                />
+              </div>
+
               <button type="submit" className="login-btn">
-                {loginType === 'admin' ? 'Sign in as admin' : 'Open guest portal'}
+                {authMode === 'signup' ? 'Create account' : 'Sign in'}
               </button>
             </form>
 
-            {loginType === 'admin' && (
-              <div className="login-info login-info--callout">
-                <p>
-                  <strong>Demo</strong>
-                </p>
-                <p>
-                  <code>admin@hotel.com</code> · <code>admin123</code>
-                </p>
-              </div>
-            )}
+            <div className="login-info login-info--callout">
+              <p>
+                {authMode === 'signup'
+                  ? 'Create a guest account using your email and password.'
+                  : 'Sign in with your admin or guest account to access the portal.'}
+              </p>
+            </div>
 
-            {loginType === 'guest' && (
-              <div className="login-info">
-                <p>Use the same email you would use for a reservation; this build does not verify against the database.</p>
-              </div>
-            )}
+            <div className="login-info login-info--link">
+              {authMode === 'signup' ? (
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setAuthMode('login')
+                    setLoginError('')
+                  }}
+                >
+                  Already have an account? Sign in
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setAuthMode('signup')
+                    setLoginError('')
+                  }}
+                >
+                  New guest? Create an account
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

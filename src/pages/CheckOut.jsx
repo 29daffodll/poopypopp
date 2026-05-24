@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getSupabase, getSupabaseEnvFlags, isSupabaseConfigured } from '../lib/supabaseClient'
+import { isStripeConfigured } from '../lib/stripeClient'
 
 function pick(row, ...keys) {
   if (!row) return undefined
@@ -31,10 +32,58 @@ export default function CheckOut({ onBack }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [actionId, setActionId] = useState(null)
+  const [paymentActionId, setPaymentActionId] = useState(null)
   const [banner, setBanner] = useState('')
 
   const supabaseLive = isSupabaseConfigured()
   const envFlags = getSupabaseEnvFlags()
+  const stripeEnabled = isStripeConfigured()
+
+  const startStripeCheckout = async (row) => {
+    const supabase = getSupabase()
+    const bookingId = bookingPk(row)
+    const totalValue = Number(pick(row, 'totalamount', 'total_amount'))
+
+    if (!stripeEnabled) {
+      setError('Stripe is not configured. Set VITE_STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY.')
+      return
+    }
+
+    if (!bookingId || !Number.isFinite(totalValue) || totalValue <= 0) {
+      setError('Unable to start payment. Missing booking id or amount.')
+      return
+    }
+
+    setPaymentActionId(bookingId)
+    setError('')
+    setBanner('Redirecting to Stripe checkout…')
+
+    try {
+      const response = await fetch('/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId,
+          amount: totalValue,
+          currency: 'php',
+          description: `Booking #${bookingId}`
+        })
+      })
+
+      const payload = await response.json()
+      if (!response.ok) {
+        throw new Error(payload?.error || payload?.message || 'Stripe checkout failed.')
+      }
+      if (!payload?.url) {
+        throw new Error('No Stripe checkout URL returned from the server.')
+      }
+      window.location.href = payload.url
+    } catch (err) {
+      setError(err?.message || String(err))
+      setBanner('')
+      setPaymentActionId(null)
+    }
+  }
 
   const loadData = useCallback(async () => {
     const supabase = getSupabase()
@@ -172,12 +221,6 @@ export default function CheckOut({ onBack }) {
         <h2>Check Out</h2>
       </div>
 
-      <p className="checkout-intro">
-        Active stays come from <code>bookings</code> with status <code>confirmed</code> or <code>pending</code>. Check
-        out sets status to <code>completed</code>, sets checkout date to today, and tries to set the room to{' '}
-        <code>available</code> in <code>rooms</code>.
-      </p>
-
       <div className="checkout-toolbar">
         <button type="button" className="rooms-supabase-refresh" onClick={() => void loadData()} disabled={loading}>
           {loading ? 'Loading…' : 'Refresh list'}
@@ -186,6 +229,11 @@ export default function CheckOut({ onBack }) {
 
       {error && <p className="booking-form-error checkout-banner">{error}</p>}
       {banner && <p className="checkout-banner checkout-banner--ok">{banner}</p>}
+      {!stripeEnabled && (
+        <p className="room-supabase-banner room-supabase-banner--warn" role="status">
+          Stripe is not configured. Set <code>VITE_STRIPE_PUBLISHABLE_KEY</code> and <code>STRIPE_SECRET_KEY</code> in your environment.
+        </p>
+      )}
 
       {loading && bookings.length === 0 && <p className="room-db-bookings-muted">Loading bookings…</p>}
 
@@ -207,6 +255,7 @@ export default function CheckOut({ onBack }) {
                 <th>Check-out</th>
                 <th>Total</th>
                 <th>Status</th>
+                <th>Pay</th>
                 <th />
               </tr>
             </thead>
@@ -230,6 +279,16 @@ export default function CheckOut({ onBack }) {
                       })()}
                     </td>
                     <td>{String(pick(row, 'status') ?? '—')}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="submit-btn checkout-btn"
+                        disabled={paymentActionId != null && String(paymentActionId) === String(bid)}
+                        onClick={() => void startStripeCheckout(row)}
+                      >
+                        {paymentActionId != null && String(paymentActionId) === String(bid) ? 'Redirecting…' : 'Pay with Stripe'}
+                      </button>
+                    </td>
                     <td>
                       <button
                         type="button"

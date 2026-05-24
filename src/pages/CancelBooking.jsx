@@ -129,6 +129,72 @@ export default function CancelBooking({ onBack }) {
     setBanner('')
   }
 
+  const cancelBookingRow = async (row, reason) => {
+    if (!row) return
+    setError('')
+    setBanner('')
+
+    const supabase = getSupabase()
+    if (!supabase) return
+
+    const bid = Number(bookingPk(row))
+    if (!Number.isFinite(bid) || bid <= 0) {
+      setError('Unable to cancel: invalid booking row.')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const tryPatches = [
+        { status: 'cancelled', cancellationreason: reason },
+        { status: 'cancelled', cancellation_reason: reason },
+        { status: 'cancelled' }
+      ]
+
+      let lastErr = null
+      let ok = false
+      for (const patch of tryPatches) {
+        let res = await supabase.from('bookings').update(patch).eq('bookingid', bid)
+        if (res.error) {
+          res = await supabase.from('bookings').update(patch).eq('booking_id', bid)
+        }
+        if (!res.error) {
+          ok = true
+          break
+        }
+        lastErr = res.error
+      }
+      if (!ok) {
+        setError(lastErr?.message ?? 'Unable to cancel booking.')
+        return
+      }
+
+      const roomId = pick(row, 'roomid', 'room_id')
+      if (roomId != null) {
+        const r1 = await supabase.from('rooms').update({ status: 'available' }).eq('roomid', roomId)
+        if (r1.error) {
+          await supabase.from('rooms').update({ status: 'available' }).eq('room_id', roomId)
+        }
+      }
+
+      setBanner(
+        `Booking #${bid} cancelled.${reason ? ` Reason: ${reason}.` : ''} Room ${roomLabel(roomId)} was set to available where RLS allows.`
+      )
+      setCancelData({ bookingId: '', guestName: '', cancellationReason: '' })
+      await loadData()
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleRowCancel = async (row) => {
+    const bid = bookingPk(row)
+    if (!window.confirm(`Cancel booking #${bid}? This will mark it as cancelled in the bookings table.`)) {
+      return
+    }
+    await cancelBookingRow(row, 'Cancelled from the cancel booking page.')
+  }
+
   const performCancel = async (e) => {
     e.preventDefault()
     setError('')
@@ -163,48 +229,7 @@ export default function CancelBooking({ onBack }) {
       return
     }
 
-    setSubmitting(true)
-    try {
-      const tryPatches = [
-        { status: 'cancelled', cancellationreason: reason },
-        { status: 'cancelled', cancellation_reason: reason },
-        { status: 'cancelled' }
-      ]
-
-      let lastErr = null
-      let ok = false
-      for (const patch of tryPatches) {
-        let res = await supabase.from('bookings').update(patch).eq('bookingid', bid)
-        if (res.error) {
-          res = await supabase.from('bookings').update(patch).eq('booking_id', bid)
-        }
-        if (!res.error) {
-          ok = true
-          break
-        }
-        lastErr = res.error
-      }
-      if (!ok && lastErr) {
-        setError(lastErr.message)
-        return
-      }
-
-      const roomId = pick(row, 'roomid', 'room_id')
-      if (roomId != null) {
-        const r1 = await supabase.from('rooms').update({ status: 'available' }).eq('roomid', roomId)
-        if (r1.error) {
-          await supabase.from('rooms').update({ status: 'available' }).eq('room_id', roomId)
-        }
-      }
-
-      setBanner(
-        `Booking #${bid} cancelled. Reason on file: ${reason}. Room ${roomLabel(roomId)} was set to available where RLS allows (same as check-out).`
-      )
-      setCancelData({ bookingId: '', guestName: '', cancellationReason: '' })
-      await loadData()
-    } finally {
-      setSubmitting(false)
-    }
+    await cancelBookingRow(row, reason)
   }
 
   if (!supabaseLive) {
@@ -238,13 +263,6 @@ export default function CancelBooking({ onBack }) {
         </button>
         <h2>Cancel Booking</h2>
       </div>
-
-      <p className="checkout-intro cancel-booking-intro">
-        Cancellable rows are <code>bookings</code> with status <code>confirmed</code> or <code>pending</code>. Cancelling
-        sets status to <code>cancelled</code> and tries to set the room to <code>available</code>. If your table has a
-        text column for the reason (<code>cancellationreason</code> or <code>cancellation_reason</code>), it is filled;
-        otherwise only status is updated and the reason appears in the message below.
-      </p>
 
       <div className="checkout-toolbar">
         <button type="button" className="rooms-supabase-refresh" onClick={() => void loadData()} disabled={loading}>
@@ -291,9 +309,19 @@ export default function CancelBooking({ onBack }) {
                     <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>
                     <td>{String(pick(row, 'status') ?? '—')}</td>
                     <td>
-                      <button type="button" className="submit-btn checkout-btn" onClick={() => fillFromRow(row)}>
+                      <div className="cancel-row-actions">
+                      <button type="button" className="submit-btn checkout-btn" onClick={() => fillFromRow(row)} disabled={submitting}>
                         Fill form
                       </button>
+                      <button
+                        type="button"
+                        className="submit-btn checkout-btn"
+                        onClick={() => void handleRowCancel(row)}
+                        disabled={submitting}
+                      >
+                        Cancel
+                      </button>
+                    </div>
                     </td>
                   </tr>
                 )
