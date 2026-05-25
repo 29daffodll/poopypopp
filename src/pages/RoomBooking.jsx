@@ -50,6 +50,7 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
   const [roomBookings, setRoomBookings] = useState([])
   const [roomBookingsLoading, setRoomBookingsLoading] = useState(false)
   const [roomBookingsError, setRoomBookingsError] = useState('')
+  const [bookingTab, setBookingTab] = useState('pending')
   const [allBookings, setAllBookings] = useState([])
   const [allBookingsLoading, setAllBookingsLoading] = useState(false)
   const [allBookingsError, setAllBookingsError] = useState('')
@@ -132,6 +133,27 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
       cancelled = true
     }
   }, [bookingData.roomType, loadRoomBookings, isAdmin])
+
+  const bookingsByStatus = useMemo(() => {
+    const statuses = ['all', 'pending', 'completed', 'cancelled']
+    const map = {}
+    for (const s of statuses) map[s] = []
+    for (const r of roomBookings || []) {
+      const s = String(pick(r, 'status') ?? 'pending')
+      if (map[s]) map[s].push(r)
+      else map[s] = [r]
+      map['all'].push(r)
+    }
+    // sort each list by check-in descending
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => {
+        const da = String(pick(a, 'checkindate', 'check_in_date', 'checkin_date') ?? '')
+        const db = String(pick(b, 'checkindate', 'check_in_date', 'checkin_date') ?? '')
+        return db.localeCompare(da)
+      })
+    }
+    return map
+  }, [roomBookings])
 
   useEffect(() => {
     if (initialOpenBookingModal && !hasAutoOpened) {
@@ -427,74 +449,6 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
         </div>
       )}
 
-      {supabaseLive && isAdmin && (
-        <div className="room-db-bookings-section room-all-bookings-section">
-          <h3>All bookings</h3>
-          <p className="room-db-bookings-hint">
-            Review all reservations and use Edit or Cancel to update existing rows.
-          </p>
-          {allBookingsLoading && <p className="room-db-bookings-muted">Loading…</p>}
-          {allBookingsError && <p className="booking-form-error">{allBookingsError}</p>}
-          {tableActionError && <p className="booking-form-error">{tableActionError}</p>}
-          {!allBookingsLoading && !allBookingsError && allBookings.length === 0 && (
-            <p className="room-db-bookings-muted">No rows returned from <code>bookings</code> (empty table or RLS blocking read).</p>
-          )}
-          {!allBookingsLoading && !allBookingsError && allBookings.length > 0 && (
-            <div className="room-db-bookings-table-wrap">
-              <table className="room-db-bookings-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Guest</th>
-                    <th>Room</th>
-                    <th>Check-in</th>
-                    <th>Check-out</th>
-                    <th>Total</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allBookings.map((row, idx) => {
-                    const bid = bookingPk(row)
-                    const busy = actionId != null && String(actionId) === String(bid)
-                    return (
-                      <tr key={bid != null ? `booking-${bid}` : `row-${idx}`}>
-                        <td>{bid ?? '—'}</td>
-                        <td>{pick(row, 'guestid', 'guest_id') ?? '—'}</td>
-                        <td>{pick(row, 'roomid', 'room_id') ?? '—'}</td>
-                        <td>{String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? '—')}</td>
-                        <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>
-                        <td>
-                          {(() => {
-                            const t = pick(row, 'totalamount', 'total_amount')
-                            return t != null && Number.isFinite(Number(t)) ? Number(t).toFixed(2) : (t ?? '—')
-                          })()}
-                        </td>
-                        <td>{String(pick(row, 'status') ?? '—')}</td>
-                        <td>
-                          <button type="button" className="submit-btn" onClick={() => handleEditBooking(row)}>
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="cancel-btn"
-                            disabled={busy}
-                            onClick={() => void handleCancelBooking(row)}
-                          >
-                            {busy ? 'Cancelling…' : 'Cancel'}
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
       <div className="room-booking-room-toolbar">
         <label htmlFor="room-type-select">Room category</label>
         <select
@@ -525,10 +479,96 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
           )}
           {!roomBookingsLoading && !roomBookingsError && roomBookings.length > 0 && (
             <div className="room-db-bookings-table-wrap">
+              <div className="rb-tabs">
+                {['pending', 'completed', 'cancelled'].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className={`rb-tab${bookingTab === s ? ' rb-tab--active' : ''}`}
+                    onClick={() => setBookingTab(s)}
+                  >
+                    {s.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())} ({bookingsByStatus[s]?.length || 0})
+                  </button>
+                ))}
+              </div>
+
+              <div className="rb-panel">
+                {roomBookingsLoading && <p className="room-db-bookings-muted">Loading…</p>}
+                {!roomBookingsLoading && bookingsByStatus[bookingTab]?.length === 0 && (
+                  <p className="room-db-bookings-muted">No bookings in this category.</p>
+                )}
+                {!roomBookingsLoading && bookingsByStatus[bookingTab]?.length > 0 && (
+                  <table className="room-db-bookings-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Check-in</th>
+                        <th>Check-out</th>
+                        <th>Total</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bookingsByStatus[bookingTab].map((row, idx) => {
+                        const bid = bookingPk(row)
+                        const busy = actionId != null && String(actionId) === String(bid)
+                        return (
+                          <tr key={bid != null ? `rb-${bid}` : `r-${idx}`}>
+                            <td>{bid ?? '—'}</td>
+                            <td>{String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? '—')}</td>
+                            <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>
+                            <td>
+                              {(() => {
+                                const t = pick(row, 'totalamount', 'total_amount')
+                                return t != null && Number.isFinite(Number(t)) ? Number(t).toFixed(2) : (t ?? '—')
+                              })()}
+                            </td>
+                            <td>{String(pick(row, 'status') ?? '—')}</td>
+                            <td>
+                              <button type="button" className="submit-btn" onClick={() => handleEditBooking(row)}>
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="cancel-btn"
+                                disabled={busy}
+                                onClick={() => void handleCancelBooking(row)}
+                              >
+                                {busy ? 'Cancelling…' : 'Cancel'}
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {supabaseLive && isAdmin && (
+        <div className="room-db-bookings-section room-all-bookings-section">
+          <h3>All bookings</h3>
+          <p className="room-db-bookings-hint">
+            Review all reservations and use Edit or Cancel to update existing rows.
+          </p>
+          {allBookingsLoading && <p className="room-db-bookings-muted">Loading…</p>}
+          {allBookingsError && <p className="booking-form-error">{allBookingsError}</p>}
+          {tableActionError && <p className="booking-form-error">{tableActionError}</p>}
+          {!allBookingsLoading && !allBookingsError && allBookings.length === 0 && (
+            <p className="room-db-bookings-muted">No rows returned from <code>bookings</code> (empty table or RLS blocking read).</p>
+          )}
+          {!allBookingsLoading && !allBookingsError && allBookings.length > 0 && (
+            <div className="room-db-bookings-table-wrap">
               <table className="room-db-bookings-table">
                 <thead>
                   <tr>
                     <th>ID</th>
+                    <th>Room</th>
                     <th>Check-in</th>
                     <th>Check-out</th>
                     <th>Total</th>
@@ -537,12 +577,13 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
                   </tr>
                 </thead>
                 <tbody>
-                  {roomBookings.map((row, idx) => {
+                  {allBookings.map((row, idx) => {
                     const bid = bookingPk(row)
                     const busy = actionId != null && String(actionId) === String(bid)
                     return (
-                      <tr key={bid != null ? `rb-${bid}` : `r-${idx}`}>
+                      <tr key={bid != null ? `booking-${bid}` : `row-${idx}`}>
                         <td>{bid ?? '—'}</td>
+                        <td>{pick(row, 'roomid', 'room_id') ?? '—'}</td>
                         <td>{String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? '—')}</td>
                         <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>
                         <td>

@@ -9,12 +9,6 @@ function pick(row, ...keys) {
   return undefined
 }
 
-function readDefaultGuestId() {
-  const raw = import.meta.env.VITE_DEFAULT_GUEST_ID || import.meta.env.NEXT_PUBLIC_DEFAULT_GUEST_ID
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : null
-}
-
 function todayYmd() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -104,7 +98,6 @@ export default function CheckIn({ onBack }) {
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedRoom, setSelectedRoom] = useState(null)
   const [guestName, setGuestName] = useState('')
-  const [guestId, setGuestId] = useState(() => (readDefaultGuestId() != null ? String(readDefaultGuestId()) : ''))
   const [checkInDate, setCheckInDate] = useState(todayYmd)
   const [checkOutDate, setCheckOutDate] = useState(() => addDaysYmd(todayYmd(), 1))
   const [submitting, setSubmitting] = useState(false)
@@ -191,7 +184,6 @@ export default function CheckIn({ onBack }) {
 
   const resetForm = useCallback(() => {
     setGuestName('')
-    setGuestId(readDefaultGuestId() != null ? String(readDefaultGuestId()) : '')
     setCheckInDate(todayYmd())
     setCheckOutDate(addDaysYmd(todayYmd(), 1))
     setFormError('')
@@ -231,12 +223,10 @@ export default function CheckIn({ onBack }) {
     }
     const nights = Math.max(1, Math.round((checkOut - checkIn) / 86400000))
     const total = nights * selectedRoom.pricePerNight
-
-    const gidRaw = String(guestId).trim()
-    const gid = gidRaw === '' ? NaN : Number(gidRaw)
-    const hasGuestId = Number.isFinite(gid) && gid > 0
+    const bookingGuestId = 1
 
     setSubmitting(true)
+    let roomUpdated = false
     try {
       let u = await supabase
         .from('rooms')
@@ -271,28 +261,40 @@ export default function CheckIn({ onBack }) {
         await loadRooms()
         return
       }
+      roomUpdated = true
 
       let bookingMsg = ''
-      if (hasGuestId) {
-        const insert = {
-          guestid: gid,
-          roomid: roomId,
-          checkindate: checkInDate,
-          checkoutdate: checkOutDate,
-          totalamount: total,
-          status: 'confirmed'
+      const insert = {
+        guestid: bookingGuestId,
+        roomid: roomId,
+        checkindate: checkInDate,
+        checkoutdate: checkOutDate,
+        totalamount: total,
+        status: 'confirmed'
+      }
+      const ins = await supabase.from('bookings').insert(insert).select('bookingid')
+      if (ins.error) {
+        bookingMsg = ` Room is marked occupied, but booking was not saved: ${ins.error.message}`
+        // rollback room status when booking creation fails
+        let rollback = await supabase
+          .from('rooms')
+          .update({ status: 'available' })
+          .eq('roomid', roomId)
+          .select('roomid')
+        if (rollback.error) {
+          rollback = await supabase
+            .from('rooms')
+            .update({ status: 'available' })
+            .eq('room_id', roomId)
+            .select('room_id')
         }
-        const ins = await supabase.from('bookings').insert(insert).select('bookingid, booking_id')
-        if (ins.error) {
-          bookingMsg = ` Room is marked occupied, but booking was not saved: ${ins.error.message}`
-        } else {
-          const row = ins.data?.[0]
-          const bid = pick(row, 'bookingid', 'booking_id')
-          bookingMsg = ` Booking #${bid ?? '?'} created (${nights} night(s), $${total.toFixed(2)}).`
+        if (rollback.error) {
+          console.error('Rollback failed:', rollback.error)
         }
       } else {
-        bookingMsg =
-          ' No booking row was created (guest ID empty). Check-out works from bookings — add a booking later if needed.'
+        const row = ins.data?.[0]
+        const bid = pick(row, 'bookingid')
+        bookingMsg = ` Booking #${bid ?? '?'} created (${nights} night(s), $${total.toFixed(2)}).`
       }
 
       setBanner(
@@ -305,8 +307,6 @@ export default function CheckIn({ onBack }) {
       setSubmitting(false)
     }
   }
-
-  const defGid = readDefaultGuestId()
 
   return (
     <div className="page-content checkin-page">
@@ -474,27 +474,6 @@ export default function CheckIn({ onBack }) {
                   placeholder="e.g. James Carter"
                   required
                 />
-              </div>
-              <div className="checkin-form-group">
-                <label htmlFor="checkin-guest-id">Guest ID (optional)</label>
-                <input
-                  id="checkin-guest-id"
-                  type="text"
-                  inputMode="numeric"
-                  value={guestId}
-                  onChange={(e) => setGuestId(e.target.value)}
-                  placeholder={defGid != null ? `default ${defGid} from env` : 'e.g. 85 — must exist in guests'}
-                />
-                <p className="checkin-field-hint">
-                  When set, creates a <code>bookings</code> row (<code>confirmed</code>) for check-out. Leave blank
-                  to only mark the room occupied.
-                  {defGid != null && (
-                    <>
-                      {' '}
-                      Env default: <code>{defGid}</code>.
-                    </>
-                  )}
-                </p>
               </div>
               <div className="checkin-form-row">
                 <div className="checkin-form-group">

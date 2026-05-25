@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSupabase, getSupabaseEnvFlags, isSupabaseConfigured } from '../lib/supabaseClient'
 import { isStripeConfigured } from '../lib/stripeClient'
 
@@ -34,6 +34,7 @@ export default function CheckOut({ onBack }) {
   const [actionId, setActionId] = useState(null)
   const [paymentActionId, setPaymentActionId] = useState(null)
   const [banner, setBanner] = useState('')
+  const stripeSuccessProcessed = useRef(false)
 
   const supabaseLive = isSupabaseConfigured()
   const envFlags = getSupabaseEnvFlags()
@@ -59,6 +60,10 @@ export default function CheckOut({ onBack }) {
     setBanner('Redirecting to Stripe checkout…')
 
     try {
+      // Save booking data for auto-completion after Stripe redirect
+      sessionStorage.setItem('stripeCheckoutBookingId', String(bookingId))
+      sessionStorage.setItem('stripeCheckoutBookingData', JSON.stringify(row))
+
       const response = await fetch('/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,6 +145,91 @@ export default function CheckOut({ onBack }) {
     queueMicrotask(() => {
       void loadData()
     })
+  }, [loadData])
+
+  // Auto-complete checkout after successful Stripe payment
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const paymentStatus = params.get('payment')
+    
+    // Only process once per page load
+    if (stripeSuccessProcessed.current) {
+      return
+    }
+    
+    if (paymentStatus === 'success') {
+      const storedBookingData = sessionStorage.getItem('stripeCheckoutBookingData')
+      
+      if (storedBookingData) {
+        try {
+          stripeSuccessProcessed.current = true
+          const bookingData = JSON.parse(storedBookingData)
+          setBanner('Payment successful! Completing checkout…')
+          
+          // Perform the checkout with the stored booking data
+          const completeCheckout = async () => {
+            const supabase = getSupabase()
+            if (!supabase) {
+              setError('Supabase is not configured.')
+              return
+            }
+            const bid = bookingPk(bookingData)
+            const roomId = pick(bookingData, 'roomid', 'room_id')
+            if (bid == null) {
+              setBanner('Could not read booking id from payment data.')
+              return
+            }
+            setActionId(bid)
+            const today = todayYmd()
+
+            const patch = {
+              status: 'completed',
+              checkoutdate: today
+            }
+
+            let res = await supabase.from('bookings').update(patch).eq('bookingid', bid)
+            if (res.error) {
+              res = await supabase.from('bookings').update(patch).eq('booking_id', bid)
+            }
+            if (res.error) {
+              setError(res.error.message)
+              setActionId(null)
+              return
+            }
+
+            if (roomId != null) {
+              const r1 = await supabase.from('rooms').update({ status: 'available' }).eq('roomid', roomId)
+              if (r1.error) {
+                await supabase.from('rooms').update({ status: 'available' }).eq('room_id', roomId)
+              }
+            }
+
+            setBanner(`Booking #${bid} checked out. Room marked available.`)
+            setActionId(null)
+            // Reload the bookings list
+            await loadData()
+            
+            // Clean up session storage and URL
+            sessionStorage.removeItem('stripeCheckoutBookingId')
+            sessionStorage.removeItem('stripeCheckoutBookingData')
+            window.history.replaceState({}, document.title, window.location.pathname)
+          }
+          
+          void completeCheckout()
+        } catch (e) {
+          console.error('Failed to parse stored booking data:', e)
+          stripeSuccessProcessed.current = true
+          sessionStorage.removeItem('stripeCheckoutBookingId')
+          sessionStorage.removeItem('stripeCheckoutBookingData')
+        }
+      }
+    } else if (paymentStatus === 'cancel') {
+      stripeSuccessProcessed.current = true
+      setBanner('Payment cancelled. Booking not checked out.')
+      sessionStorage.removeItem('stripeCheckoutBookingId')
+      sessionStorage.removeItem('stripeCheckoutBookingData')
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
   }, [loadData])
 
   const roomLabel = (roomId) => {
