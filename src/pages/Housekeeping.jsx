@@ -80,7 +80,7 @@ export default function Housekeeping({ onBack }) {
   }
 
   const nextStatus = (status) => {
-    if (status === 'pending') return 'in_progress'
+    if (status === 'pending' || status === 'active') return 'in_progress'
     if (status === 'in_progress') return 'completed'
     return null
   }

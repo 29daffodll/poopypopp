@@ -3588,7 +3588,7 @@ table tbody tr:hover {
   border-left: 4px solid #15803d;
 }
 
-.guest-portal-page .booking-card.pending {
+.guest-portal-page .booking-card.active {
   border-left: 4px solid #d97706;
 }
 
@@ -3670,7 +3670,7 @@ table tbody tr:hover {
   border-left: 5px solid #2e7d32;
 }
 
-.booking-card.pending {
+.booking-card.active {
   border-left: 5px solid #f57c00;
 }
 
@@ -3705,7 +3705,7 @@ table tbody tr:hover {
   color: #1b5e20;
 }
 
-.booking-status.pending {
+.booking-status.active {
   background-color: #fff3e0;
   color: #e65100;
 }

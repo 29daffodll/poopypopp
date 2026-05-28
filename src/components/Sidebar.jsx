@@ -11,7 +11,7 @@ function pick(row, ...keys) {
 
 function isActiveStayStatus(status) {
   const s = String(status ?? '').toLowerCase()
-  return s === 'confirmed' || s === 'pending'
+  return s === 'confirmed' || s === 'pending' || s === 'active'
 }
 
 const POLL_MS = 30_000
@@ -52,6 +52,18 @@ export default function Sidebar({ user, onLogout }) {
       const { data: roomRows, error: rErr } = await supabase.from('rooms').select('*').limit(1000)
       if (rErr) throw rErr
 
+      const { data: bookingRows, error: bErr } = await supabase.from('bookings').select('*').limit(800)
+      if (bErr) throw bErr
+
+      // Build set of room IDs that have active bookings
+      const activeBookings = (bookingRows ?? []).filter((b) => isActiveStayStatus(pick(b, 'status')))
+      const roomsWithActiveBookings = new Set()
+      for (const booking of activeBookings) {
+        const rid = pick(booking, 'roomid', 'room_id')
+        if (rid != null) roomsWithActiveBookings.add(Number(rid))
+      }
+      setActiveStays(activeBookings.length)
+
       let available = 0
       let occupied = 0
       let maintenance = 0
@@ -59,10 +71,20 @@ export default function Sidebar({ user, onLogout }) {
       const branchSet = new Set()
       for (const row of roomRows ?? []) {
         const st = String(pick(row, 'status') ?? '').toLowerCase()
-        if (st === 'available') available += 1
-        else if (st === 'occupied') occupied += 1
-        else if (st === 'maintenance' || st === 'cleaning' || st === 'dirty') maintenance += 1
-        else other += 1
+        const rid = pick(row, 'roomid', 'room_id')
+        const hasActiveBooking = rid != null && roomsWithActiveBookings.has(Number(rid))
+
+        // Count as occupied if status is occupied OR has an active booking
+        if (hasActiveBooking || st === 'occupied') {
+          occupied += 1
+        } else if (st === 'available') {
+          available += 1
+        } else if (st === 'maintenance' || st === 'cleaning' || st === 'dirty') {
+          maintenance += 1
+        } else {
+          other += 1
+        }
+
         const bid = pick(row, 'branchid', 'branch_id')
         if (bid != null && Number.isFinite(Number(bid))) branchSet.add(Number(bid))
       }
@@ -75,11 +97,6 @@ export default function Sidebar({ user, onLogout }) {
         other,
         branches: branchSet.size
       })
-
-      const { data: bookingRows, error: bErr } = await supabase.from('bookings').select('*').limit(800)
-      if (bErr) throw bErr
-      const active = (bookingRows ?? []).filter((b) => isActiveStayStatus(pick(b, 'status')))
-      setActiveStays(active.length)
 
       const rev = await supabase.from('reviews').select('*', { count: 'exact', head: true })
       if (!rev.error && typeof rev.count === 'number') {
@@ -220,7 +237,7 @@ export default function Sidebar({ user, onLogout }) {
           </li>
           <li>
             <span>Active stays</span>
-            <strong title="Bookings with status confirmed or pending">{supabaseOk ? activeStays : '—'}</strong>
+            <strong title="Bookings with status confirmed or active">{supabaseOk ? activeStays : '—'}</strong>
           </li>
           <li>
             <span>Reviews</span>

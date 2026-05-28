@@ -12,7 +12,7 @@ function pick(row, ...keys) {
 /** Bookings that can still be cancelled (same as active stays on Check Out). */
 function isCancellableStatus(status) {
   const s = String(status ?? '').toLowerCase()
-  return s === 'confirmed' || s === 'pending'
+  return s === 'confirmed' || s === 'pending' || s === 'active'
 }
 
 function bookingPk(booking) {
@@ -277,7 +277,7 @@ export default function CancelBooking({ onBack }) {
 
       {!loading && bookings.length === 0 && (
         <p className="room-db-bookings-muted">
-          No cancellable bookings (nothing with status confirmed/pending), or RLS is hiding rows.
+          No cancellable bookings (nothing with status confirmed/active), or RLS is hiding rows.
         </p>
       )}
 
@@ -287,7 +287,6 @@ export default function CancelBooking({ onBack }) {
             <thead>
               <tr>
                 <th>Booking ID</th>
-                <th>Guest</th>
                 <th>Room</th>
                 <th>Check-in</th>
                 <th>Check-out</th>
@@ -298,12 +297,10 @@ export default function CancelBooking({ onBack }) {
             <tbody>
               {bookings.map((row, idx) => {
                 const bid = bookingPk(row)
-                const gid = pick(row, 'guestid', 'guest_id')
                 const rid = pick(row, 'roomid', 'room_id')
                 return (
                   <tr key={bid != null ? `cancel-${bid}` : `cancel-row-${idx}`}>
                     <td>{bid ?? '—'}</td>
-                    <td>{guestLabel(gid)}</td>
                     <td>{roomLabel(rid)}</td>
                     <td>{String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? '—')}</td>
                     <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>

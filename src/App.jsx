@@ -16,6 +16,7 @@ import Reviews from './pages/Reviews'
 import Housekeeping from './pages/Housekeeping'
 import FoodDrinks from './pages/FoodDrinks'
 import Settings from './pages/Settings'
+import GuestCheckout from './pages/GuestCheckout'
 
 function App() {
   const [currentPage, setCurrentPage] = useState(() => {
@@ -90,6 +91,7 @@ function App() {
         return (
           <RoomBooking
             userType={userType}
+            user={user}
             onBack={handleBack}
             initialRoomType={initialRoomType}
             initialCheckInDate={initialCheckInDate}
@@ -120,6 +122,8 @@ function App() {
         )
       case 'feedback':
         return <Feedback onBack={handleBack} />
+      case 'guestcheckout':
+        return <GuestCheckout onBack={handleBack} />
       case 'reviews':
         return <Reviews onBack={handleBack} />
       case 'settings':

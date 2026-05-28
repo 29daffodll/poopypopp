@@ -48,42 +48,15 @@ const roomServiceMenu = {
   ]
 }
 
-const mockBookings = [
-  {
-    id: 'BK001',
-    bookingId: 40,
-    roomNumber: 101,
-    roomType: 'Suite',
-    checkIn: '2026-04-27',
-    checkOut: '2026-04-30',
-    status: 'Confirmed',
-    guestName: 'John Doe',
-    price: '$750',
-    hasDigitalKey: true
-  },
-  {
-    id: 'BK002',
-    roomNumber: 205,
-    roomType: 'Double',
-    checkIn: '2026-05-05',
-    checkOut: '2026-05-08',
-    status: 'Pending',
-    guestName: 'Jane Smith',
-    price: '$450',
-    hasDigitalKey: false
-  },
-  {
-    id: 'BK003',
-    roomNumber: 103,
-    roomType: 'Single',
-    checkIn: '2026-04-20',
-    checkOut: '2026-04-25',
-    status: 'Completed',
-    guestName: 'Bob Johnson',
-    price: '$500',
-    hasDigitalKey: false
+function pick(row, ...keys) {
+  if (!row) return undefined
+  for (const k of keys) {
+    if (Object.prototype.hasOwnProperty.call(row, k) && row[k] != null) return row[k]
   }
-]
+  return undefined
+}
+
+// live bookings state will replace the previous mock data
 
 function formatStayRange(checkIn, checkOut) {
   const a = new Date(checkIn)
@@ -93,6 +66,9 @@ function formatStayRange(checkIn, checkOut) {
 
 export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
   const [selectedBooking, setSelectedBooking] = useState(null)
+  const [bookings, setBookings] = useState([])
+  const [bookingsLoading, setBookingsLoading] = useState(false)
+  const [bookingsError, setBookingsError] = useState('')
   const [showModifyForm, setShowModifyForm] = useState(false)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [showRoomService, setShowRoomService] = useState(false)
@@ -117,8 +93,107 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
   const [portalNotice, setPortalNotice] = useState(null)
 
   const supabaseLive = isSupabaseConfigured()
-  const activeBooking = mockBookings.find((booking) => booking.status === 'Confirmed' || booking.status === 'Pending')
+  const activeBooking = bookings.find((booking) => {
+    const s = String(booking.status).toLowerCase()
+    return s === 'confirmed' || s === 'pending' || s === 'active'
+  })
   const defaultBookingId = activeBooking?.bookingId ?? null
+
+  const loadBookings = useCallback(async () => {
+    const supabase = getSupabase()
+    if (!supabase || !user || !user.email) {
+      setBookings([])
+      return
+    }
+
+    setBookingsLoading(true)
+    setBookingsError('')
+    try {
+      const email = String(user.email).trim().toLowerCase()
+      console.log('[GuestPortal] Loading bookings for email:', email)
+      
+      // Since guests table doesn't exist and bookings don't have email column yet,
+      // we can't directly query by guest email. Show guidance to user.
+      // In the future, when bookings have a guestemail column, we can query by that.
+      let bookingRows = null
+      
+      // Try to query by guestemail (for bookings made by guests with email stored)
+      try {
+        const { data, error } = await supabase.from('bookings').select('*').ilike('guestemail', email)
+        console.log('[GuestPortal] Bookings by guestemail:', { error: error?.message, dataCount: data?.length ?? 0 })
+        if (!error && Array.isArray(data) && data.length) {
+          bookingRows = data
+        }
+      } catch (e) {
+        console.log('[GuestPortal] guestemail column not available:', e.message)
+      }
+      
+      if (!bookingRows || !bookingRows.length) {
+        // Fallback: No bookings found - this is expected if the schema isn't set up properly
+        console.log('[GuestPortal] No bookings found. Schema may need guestemail column in bookings table.')
+        bookingRows = []
+      }
+
+      const rows = bookingRows ?? []
+
+      // attempt to load room labels (room number and type) when bookings reference room IDs
+      const roomIdSet = new Set()
+      for (const r of rows) {
+        const rid = pick(r, 'roomid', 'room_id')
+        if (rid != null) roomIdSet.add(String(rid))
+      }
+
+      const roomMap = new Map()
+      if (roomIdSet.size > 0) {
+        try {
+          const { data: roomRows, error: roomErr } = await supabase.from('rooms').select('*').in('roomid', [...roomIdSet])
+          if (!roomErr && Array.isArray(roomRows)) {
+            for (const row of roomRows) {
+              const id = pick(row, 'roomid', 'room_id')
+              const number = pick(row, 'roomnumber', 'room_number') ?? id
+              const type = pick(row, 'roomtype', 'room_type') ?? ''
+              roomMap.set(String(id), { number, type })
+              roomMap.set(String(number), { number, type })
+            }
+          }
+        } catch (e) {
+          // ignore room lookup errors
+        }
+      }
+
+      const mapped = (rows || []).map((r) => {
+        const rid = pick(r, 'roomid', 'room_id')
+        const rawRoomNum = pick(r, 'roomnumber', 'room_number', 'room') ?? (rid != null ? String(rid) : '—')
+        const roomInfo = roomMap.get(String(rid)) ?? roomMap.get(String(rawRoomNum))
+        const roomLabel = roomInfo ? `${roomInfo.number} — ${roomInfo.type || ''}`.trim() : rawRoomNum
+
+        return {
+          id: String(pick(r, 'bookingid', 'booking_id', 'id') ?? ''),
+          bookingId: Number(pick(r, 'bookingid', 'booking_id', 'id')) || null,
+          roomNumber: roomLabel,
+          roomType: pick(r, 'roomtype', 'room_type') ?? (roomInfo?.type ?? ''),
+          checkIn: pick(r, 'checkindate', 'check_in_date', 'checkin_date') ?? pick(r, 'checkin') ?? '',
+          checkOut: pick(r, 'checkoutdate', 'check_out_date', 'checkout_date') ?? pick(r, 'checkout') ?? '',
+          status: (() => {
+            const s = pick(r, 'status')
+            if (!s) return 'Active'
+            const sl = String(s).toLowerCase()
+            return sl === 'pending' ? 'Active' : s
+          })(),
+          guestName: pick(r, 'guestname', 'guest_name', 'name') ?? user.email ?? 'Guest',
+          price: pick(r, 'total', 'price') ?? '',
+          hasDigitalKey: Boolean(pick(r, 'has_digital_key', 'hasdigitalkey', 'digital_key'))
+        }
+      })
+
+      setBookings(mapped)
+    } catch (err) {
+      setBookingsError(err?.message || String(err))
+      setBookings([])
+    } finally {
+      setBookingsLoading(false)
+    }
+  }, [user])
 
   const showNotice = useCallback((text, type = 'success') => {
     setPortalNotice({ text, type })
@@ -172,7 +247,7 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
       try {
         const payload = {
           servicetype,
-          status: 'pending',
+          status: 'active',
           notes: notes ? String(notes).trim() : null,
           requestedat: new Date().toISOString()
         }
@@ -217,7 +292,8 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
   useEffect(() => {
     if (!supabaseLive) return
     void loadServiceRequests()
-  }, [loadServiceRequests, supabaseLive])
+    void loadBookings()
+  }, [loadServiceRequests, loadBookings, supabaseLive])
 
   const guestEmail = user?.email ?? user?.name ?? 'Guest'
 
@@ -263,10 +339,20 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
       <section className="bookings-container" aria-labelledby="gp-bookings-title">
         <div className="guest-portal-section-head">
           <h3 id="gp-bookings-title">Your stays</h3>
-          <span className="guest-portal-section-hint">Demo data — tap a card for details</span>
+          <span className="guest-portal-section-hint">
+            {!supabaseLive
+              ? 'Supabase not configured; live bookings unavailable.'
+              : bookingsLoading
+              ? 'Loading your bookings…'
+              : bookingsError
+              ? `Error: ${bookingsError}`
+              : bookings.length === 0
+              ? 'No bookings found. Ensure your email was used when booking and the database schema includes the guestemail column.'
+              : 'Tap a card for details.'}
+          </span>
         </div>
         <div className="bookings-grid">
-          {mockBookings.map((booking) => (
+          {bookings.map((booking) => (
             <button
               key={booking.id}
               type="button"
@@ -412,8 +498,22 @@ export default function GuestPortal({ onNavigate, onBack, user, onLogout }) {
                   Leave feedback
                 </button>
               )}
-              {(selectedBooking.status === 'Confirmed' || selectedBooking.status === 'Pending') && (
+              {(selectedBooking.status === 'Confirmed' || selectedBooking.status === 'Pending' || selectedBooking.status === 'Active') && (
                 <>
+                  <button
+                    type="button"
+                    className="action-btn pay-btn"
+                    onClick={() => {
+                      // Save booking info so the checkout page can pick it up
+                      const bookingId = selectedBooking.bookingId ?? selectedBooking.id
+                      const amount = parseFloat(String(selectedBooking.price).replace(/[^0-9.]/g, ''))
+                      sessionStorage.setItem('stripeCheckoutBookingId', String(bookingId))
+                      sessionStorage.setItem('stripeCheckoutBookingData', JSON.stringify({ bookingId, totalamount: amount, price: selectedBooking.price }))
+                      onNavigate('guestcheckout')
+                    }}
+                  >
+                    Pay & check out
+                  </button>
                   <button
                     type="button"
                     className="action-btn modify-btn"

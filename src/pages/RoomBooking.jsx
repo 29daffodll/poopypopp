@@ -19,6 +19,20 @@ function bookingPk(row) {
   return pick(row, 'bookingid', 'booking_id', 'id')
 }
 
+function guestEmail(row) {
+  return pick(row, 'guestemail', 'guest_email') ?? '—'
+}
+
+async function freeRoomForBooking(row, supabase) {
+  if (!row || !supabase) return
+  const roomId = pick(row, 'roomid', 'room_id')
+  if (roomId == null) return
+  let res = await supabase.from('rooms').update({ status: 'available' }).eq('roomid', roomId)
+  if (res.error) {
+    await supabase.from('rooms').update({ status: 'available' }).eq('room_id', roomId)
+  }
+}
+
 function getRoomIdForType(roomType) {
   const room = roomOptions.find((r) => r.id === roomType)
   return room?.dbRoomId ?? roomOptions[0].dbRoomId
@@ -30,7 +44,7 @@ const roomOptions = [
   { id: 'suite', title: 'Suite', price: '$250/night', dbRoomId: 53, pricePerNight: 250 }
 ]
 
-export default function RoomBooking({ userType, onBack, initialRoomType, initialCheckInDate, initialCheckOutDate, initialOpenBookingModal }) {
+export default function RoomBooking({ userType, user, onBack, initialRoomType, initialCheckInDate, initialCheckOutDate, initialOpenBookingModal }) {
   const isAdmin = String(userType ?? '').toLowerCase() === 'admin'
   const [showBookingModal, setShowBookingModal] = useState(false)
   const [hasAutoOpened, setHasAutoOpened] = useState(false)
@@ -50,7 +64,7 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
   const [roomBookings, setRoomBookings] = useState([])
   const [roomBookingsLoading, setRoomBookingsLoading] = useState(false)
   const [roomBookingsError, setRoomBookingsError] = useState('')
-  const [bookingTab, setBookingTab] = useState('pending')
+  const [bookingTab, setBookingTab] = useState('active')
   const [allBookings, setAllBookings] = useState([])
   const [allBookingsLoading, setAllBookingsLoading] = useState(false)
   const [allBookingsError, setAllBookingsError] = useState('')
@@ -135,11 +149,12 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
   }, [bookingData.roomType, loadRoomBookings, isAdmin])
 
   const bookingsByStatus = useMemo(() => {
-    const statuses = ['all', 'pending', 'completed', 'cancelled']
+    const statuses = ['all', 'active', 'completed', 'cancelled']
     const map = {}
     for (const s of statuses) map[s] = []
     for (const r of roomBookings || []) {
-      const s = String(pick(r, 'status') ?? 'pending')
+      const raw = String(pick(r, 'status') ?? 'active')
+      const s = raw === 'pending' ? 'active' : raw
       if (map[s]) map[s].push(r)
       else map[s] = [r]
       map['all'].push(r)
@@ -339,6 +354,11 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
       totalamount: total
     }
 
+    // If a guest is booking (not admin), store their email for later portal lookup
+    if (userType === 'guest' && user?.email) {
+      payload.guestemail = String(user.email).trim()
+    }
+
     setSubmitLoading(true)
     let data = null
     let error = null
@@ -353,7 +373,7 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
     } else {
       const res = await supabase
         .from('bookings')
-        .insert({ ...payload, status: 'pending' })
+        .insert({ ...payload, status: 'active' })
         .select('bookingid')
         .single()
       data = res.data
@@ -480,7 +500,7 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
           {!roomBookingsLoading && !roomBookingsError && roomBookings.length > 0 && (
             <div className="room-db-bookings-table-wrap">
               <div className="rb-tabs">
-                {['pending', 'completed', 'cancelled'].map((s) => (
+                {['active', 'completed', 'cancelled'].map((s) => (
                   <button
                     key={s}
                     type="button"
@@ -504,6 +524,7 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
                         <th>ID</th>
                         <th>Check-in</th>
                         <th>Check-out</th>
+                        <th>Guest Email</th>
                         <th>Total</th>
                         <th>Status</th>
                         <th>Actions</th>
@@ -518,13 +539,49 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
                             <td>{bid ?? '—'}</td>
                             <td>{String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? '—')}</td>
                             <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>
+                            <td>{guestEmail(row)}</td>
                             <td>
                               {(() => {
                                 const t = pick(row, 'totalamount', 'total_amount')
                                 return t != null && Number.isFinite(Number(t)) ? Number(t).toFixed(2) : (t ?? '—')
                               })()}
                             </td>
-                            <td>{String(pick(row, 'status') ?? '—')}</td>
+                            <td>
+                              <select
+                                value={String(pick(row, 'status') ?? 'active')}
+                                onChange={async (e) => {
+                                  const newStatus = e.target.value
+                                  setTableActionError('')
+                                  if (bid == null) return
+                                  setActionId(bid)
+                                  const supabase = getSupabase()
+                                  if (!supabase) {
+                                    setTableActionError('Supabase not configured.')
+                                    setActionId(null)
+                                    return
+                                  }
+                                  let res = await supabase.from('bookings').update({ status: newStatus }).eq('bookingid', bid)
+                                  if (res.error) {
+                                    res = await supabase.from('bookings').update({ status: newStatus }).eq('booking_id', bid)
+                                  }
+                                  if (!res.error && (newStatus === 'completed' || newStatus === 'cancelled')) {
+                                    await freeRoomForBooking(row, supabase)
+                                  }
+                                  setActionId(null)
+                                  if (res.error) {
+                                    setTableActionError(res.error.message)
+                                  } else {
+                                    await loadRoomBookings(activeRoom)
+                                    await loadAllBookings()
+                                  }
+                                }}
+                              >
+                                <option value="active">Active</option>
+                                <option value="confirmed">Confirmed</option>
+                                <option value="completed">Completed</option>
+                                <option value="cancelled">Cancelled</option>
+                              </select>
+                            </td>
                             <td>
                               <button type="button" className="submit-btn" onClick={() => handleEditBooking(row)}>
                                 Edit
@@ -571,6 +628,7 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
                     <th>Room</th>
                     <th>Check-in</th>
                     <th>Check-out</th>
+                    <th>Guest Email</th>
                     <th>Total</th>
                     <th>Status</th>
                     <th>Actions</th>
@@ -586,13 +644,46 @@ export default function RoomBooking({ userType, onBack, initialRoomType, initial
                         <td>{pick(row, 'roomid', 'room_id') ?? '—'}</td>
                         <td>{String(pick(row, 'checkindate', 'check_in_date', 'checkin_date') ?? '—')}</td>
                         <td>{String(pick(row, 'checkoutdate', 'check_out_date', 'checkout_date') ?? '—')}</td>
+                        <td>{guestEmail(row)}</td>
                         <td>
                           {(() => {
                             const t = pick(row, 'totalamount', 'total_amount')
                             return t != null && Number.isFinite(Number(t)) ? Number(t).toFixed(2) : (t ?? '—')
                           })()}
                         </td>
-                        <td>{String(pick(row, 'status') ?? '—')}</td>
+                        <td>
+                          <select
+                            value={String(pick(row, 'status') ?? 'active')}
+                            onChange={async (e) => {
+                              const newStatus = e.target.value
+                              setTableActionError('')
+                              if (bid == null) return
+                              setActionId(bid)
+                              const supabase = getSupabase()
+                              if (!supabase) {
+                                setTableActionError('Supabase not configured.')
+                                setActionId(null)
+                                return
+                              }
+                              let res = await supabase.from('bookings').update({ status: newStatus }).eq('bookingid', bid)
+                              if (res.error) {
+                                res = await supabase.from('bookings').update({ status: newStatus }).eq('booking_id', bid)
+                              }
+                              setActionId(null)
+                              if (res.error) {
+                                setTableActionError(res.error.message)
+                              } else {
+                                await loadRoomBookings(activeRoom)
+                                await loadAllBookings()
+                              }
+                            }}
+                          >
+                            <option value="active">Active</option>
+                            <option value="confirmed">Confirmed</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
+                          </select>
+                        </td>
                         <td>
                           <button type="button" className="submit-btn" onClick={() => handleEditBooking(row)}>
                             Edit

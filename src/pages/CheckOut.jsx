@@ -18,7 +18,7 @@ function todayYmd() {
 /** Statuses we treat as an active stay that can be checked out (lowercase). */
 function isCheckoutableStatus(status) {
   const s = String(status ?? '').toLowerCase()
-  return s === 'confirmed' || s === 'pending'
+  return s === 'confirmed' || s === 'pending' || s === 'active'
 }
 
 function bookingPk(booking) {
@@ -28,7 +28,6 @@ function bookingPk(booking) {
 export default function CheckOut({ onBack }) {
   const [bookings, setBookings] = useState([])
   const [roomLabels, setRoomLabels] = useState(() => new Map())
-  const [guestNames, setGuestNames] = useState(() => new Map())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [actionId, setActionId] = useState(null)
@@ -116,23 +115,9 @@ export default function CheckOut({ onBack }) {
         rm.set(String(id), label)
       }
 
-      const gm = new Map()
-      const gRes = await supabase.from('guests').select('*').limit(500)
-      if (!gRes.error && gRes.data) {
-        for (const row of gRes.data) {
-          const gid = pick(row, 'guestid', 'guest_id', 'id')
-          if (gid == null) continue
-          const name =
-            pick(row, 'guestname', 'guest_name', 'name', 'fullname', 'firstname') ?? `Guest #${gid}`
-          gm.set(Number(gid), String(name))
-          gm.set(String(gid), String(name))
-        }
-      }
-
       const active = (bookingRows ?? []).filter((b) => isCheckoutableStatus(pick(b, 'status')))
       setBookings(active)
       setRoomLabels(rm)
-      setGuestNames(gm)
     } catch (err) {
       setError(err.message || String(err))
       setBookings([])
@@ -237,11 +222,6 @@ export default function CheckOut({ onBack }) {
     return roomLabels.get(Number(roomId)) ?? roomLabels.get(String(roomId)) ?? String(roomId)
   }
 
-  const guestLabel = (guestId) => {
-    if (guestId == null) return '—'
-    return guestNames.get(Number(guestId)) ?? guestNames.get(String(guestId)) ?? `Guest ${guestId}`
-  }
-
   const performCheckout = async (row) => {
     const supabase = getSupabase()
     if (!supabase) return
@@ -329,7 +309,7 @@ export default function CheckOut({ onBack }) {
 
       {!loading && bookings.length === 0 && (
         <p className="room-db-bookings-muted">
-          No active bookings to check out (nothing with status confirmed/pending), or RLS is hiding rows.
+          No active bookings to check out (nothing with status confirmed/active), or RLS is hiding rows.
         </p>
       )}
 
@@ -339,7 +319,6 @@ export default function CheckOut({ onBack }) {
             <thead>
               <tr>
                 <th>Booking</th>
-                <th>Guest</th>
                 <th>Room</th>
                 <th>Check-in</th>
                 <th>Check-out</th>
@@ -352,13 +331,11 @@ export default function CheckOut({ onBack }) {
             <tbody>
               {bookings.map((row) => {
                 const bid = bookingPk(row)
-                const gid = pick(row, 'guestid', 'guest_id')
                 const rid = pick(row, 'roomid', 'room_id')
                 const busy = actionId != null && String(actionId) === String(bid)
                 return (
                   <tr key={String(bid)}>
                     <td>{bid ?? '—'}</td>
-                    <td>{guestLabel(gid)}</td>
                     <td>{roomLabel(rid)}</td>
                     <td>{String(pick(row, 'checkindate', 'check_in_date') ?? '—')}</td>
                     <td>{String(pick(row, 'checkoutdate', 'check_out_date') ?? '—')}</td>

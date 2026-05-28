@@ -41,9 +41,9 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     const successUrl =
-      process.env.STRIPE_SUCCESS_URL || 'http://localhost:5174/?payment=success'
+      process.env.STRIPE_SUCCESS_URL || 'http://localhost:5173/?payment=success'
     const cancelUrl =
-      process.env.STRIPE_CANCEL_URL || 'http://localhost:5174/?payment=cancel'
+      process.env.STRIPE_CANCEL_URL || 'http://localhost:5173/?payment=cancel'
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
